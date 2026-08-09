@@ -1,8 +1,5 @@
 # AssetStudio 2
 
-
-
-
 **AssetStudio 2 (AS2)** is an independent remake of [AssetStudio](https://github.com/Perfare/AssetStudio), focused on improving Unity asset inspection, previewing, decoding, and exporting.
 
 AssetStudio 2 aims to provide a more complete asset-extraction workflow while retaining the familiar functionality and behavior of the original AssetStudio.
