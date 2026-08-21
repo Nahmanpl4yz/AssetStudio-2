@@ -2,37 +2,111 @@
 
 **AssetStudio 2 (AS2)** is an independent remake of [AssetStudio](https://github.com/Perfare/AssetStudio), focused on improving Unity asset inspection, previewing, decoding, and exporting.
 
-AssetStudio 2 aims to provide a more complete asset-extraction workflow while retaining the familiar functionality and behavior of the original AssetStudio.
-
 > **Note:** AssetStudio 2 is an independent project and is **not affiliated with, sponsored by, endorsed by, or authorized by Perfare, Unity Technologies, or any of their affiliates.**
 
 **All credits belong to their respective original authors and contributors.**
 
 ---
 
-## ✨ What's New in AssetStudio 2?
+## 🚀 Latest Version — 0.17
 
-AssetStudio 2 builds upon the original AssetStudio experience with several improvements to asset handling and visualization.
+The latest release of AssetStudio 2 is **0.17**.
+
+Version 0.17 introduces new mesh reconstruction and audio playback features designed to make extracted Unity assets more useful and easier to inspect.
+
+### 🆕 New Feature: Game Object Mesh Reconstruction
+
+AssetStudio 2.0.17 can now attempt to **reconstruct the mesh layout used by a GameObject in the original game**.
+
+Instead of exporting individual meshes separately, AssetStudio 2 analyzes related meshes and attempts to combine them into the structure of the original GameObject.
+
+For example, a car in a Unity game might consist of:
+
+```text
+Car
+├── Body
+├── Interior
+├── Dashboard
+├── Front Wheels
+├── Rear Wheels
+├── Windows
+├── Seats
+└── Other Parts
+```
+
+AssetStudio 2 can scan the related meshes from the same container or through other available asset relationships and determine how they belong to the main GameObject.
+
+It then attempts to:
+
+* Find related meshes.
+* Identify meshes belonging to the same GameObject.
+* Preserve their original transforms.
+* Align interior components, wheels, body parts, and other meshes.
+* Combine them into a reconstructed GameObject mesh.
+* Produce a model that more closely resembles the object as it appeared in the original game.
+
+This is particularly useful for complex objects such as **cars, trains, characters, buildings, weapons, and other multi-part GameObjects**.
+
+> **Example:** Instead of receiving a car body, four wheels, interior, and dashboard as completely separate exports, AssetStudio 2.0.17 can attempt to reconstruct them into the complete car as it was assembled in the Unity game.
+
+Because Unity games can organize assets in many different ways, reconstruction depends on the information available in the game's serialized data. Some GameObjects may therefore require manual handling.
+
+---
+
+### 🆕 New Feature: Audio Playback Speed
+
+AssetStudio 2.0.17 adds **Audio Playback Speed** controls.
+
+When previewing supported `AudioClip` assets, you can change the playback speed to make inspecting audio easier.
+
+This can be useful for:
+
+* Quickly reviewing long audio files.
+* Inspecting sound effects at different speeds.
+* Studying game audio.
+* Comparing variations of an audio clip.
+* Inspecting very short or fast sound effects.
+
+The playback speed affects **preview playback** and does not modify the original audio asset.
+
+---
+
+# ✨ Features
 
 ### 🖼️ Improved Texture Decoding
 
 * Better support for problematic and uncommon texture formats.
 * Improved texture decoding reliability.
-* Ability to switch between the **original decoder** and the **improved decoder**.
+* Switch between the **original decoder** and the **improved decoder**.
 * Original decoder behavior remains available for compatibility.
 
 ### 🧊 Improved Mesh Preview
 
 * Preview Unity meshes directly inside AssetStudio 2.
-* Automatically associate meshes with their corresponding textures where possible.
-* Preview meshes with their textures applied.
+* Automatically associate meshes with corresponding textures where possible.
+* Preview meshes with textures applied.
 * Improved material and texture handling.
+
+### 🧩 GameObject Mesh Reconstruction
+
+* Detect related meshes belonging to a GameObject.
+* Reconstruct multi-part GameObjects.
+* Preserve object transforms when combining meshes.
+* Automatically align components such as wheels, interiors, and other parts.
+* Useful for vehicles, characters, buildings, and complex models.
 
 ### 📦 Improved Mesh Exporting
 
 * Export meshes together with their associated textures.
 * Automatically identify textures used by a mesh where possible.
-* Simplifies the process of importing extracted models into external 3D software.
+* Export reconstructed GameObjects.
+* Simplifies importing extracted models into external 3D software.
+
+### 🔊 Audio Preview
+
+* Preview supported Unity `AudioClip` assets.
+* Adjustable audio playback speed.
+* Original audio files remain unchanged.
 
 ### 🛠️ General Improvements
 
@@ -42,26 +116,29 @@ AssetStudio 2 builds upon the original AssetStudio experience with several impro
 
 ---
 
-# AssetStudio 2 vs. AssetStudio
+# 📊 AssetStudio 2 vs. AssetStudio
 
-| Feature                              |          AssetStudio          |                      AssetStudio 2                     |
-| ------------------------------------ | :---------------------------: | :----------------------------------------------------: |
-| Browse Unity assets                  |               ✅               |                            ✅                           |
-| Extract AssetBundles                 |               ✅               |                            ✅                           |
-| Texture export                       |               ✅               |                            ✅                           |
-| Sprite export                        |               ✅               |                            ✅                           |
-| Mesh export                          |               ✅               |                            ✅                           |
-| Audio export                         |               ✅               |                            ✅                           |
-| Animation export                     |               ✅               |                            ✅                           |
-| Improved texture decoders            |               ❌               |                            ✅                           |
-| Original / improved decoder switch   |               ❌               |                            ✅                           |
-| Automatic mesh ↔ texture association |        Limited / Manual       |                            ✅                           |
-| Textured mesh previews               |            Limited            |                       ✅ Improved                       |
-| Mesh + texture export                |            Limited            |                            ✅                           |
-| Problematic texture formats          |          More limited         |                       ✅ Improved                       |
-| Additional bug fixes                 |    Original implementation    |                            ✅                           |
-| Original decoder behavior            |               —               |                            ✅                           |
-| **Primary focus**                    | Asset inspection & extraction | **Improved asset inspection, previewing & extraction** |
+| Feature                              |          AssetStudio          |                     AssetStudio 2                    |
+| ------------------------------------ | :---------------------------: | :--------------------------------------------------: |
+| Browse Unity assets                  |               ✅               |                           ✅                          |
+| Extract AssetBundles                 |               ✅               |                           ✅                          |
+| Texture export                       |               ✅               |                           ✅                          |
+| Sprite export                        |               ✅               |                           ✅                          |
+| Mesh export                          |               ✅               |                           ✅                          |
+| Audio export                         |               ✅               |                           ✅                          |
+| Animation export                     |               ✅               |                           ✅                          |
+| Improved texture decoders            |               ❌               |                           ✅                          |
+| Original / improved decoder switch   |               ❌               |                           ✅                          |
+| Automatic mesh ↔ texture association |        Limited / Manual       |                           ✅                          |
+| Textured mesh previews               |            Limited            |                      ✅ Improved                      |
+| Mesh + texture export                |            Limited            |                           ✅                          |
+| **GameObject mesh reconstruction**   |               ❌               |                   ✅ **New in 0.17**                  |
+| **Multi-part mesh alignment**        |               ❌               |                   ✅ **New in 0.17**                  |
+| **Audio playback speed**             |               ❌               |                   ✅ **New in 0.17**                  |
+| Problematic texture formats          |          More limited         |                      ✅ Improved                      |
+| Additional bug fixes                 |    Original implementation    |                           ✅                          |
+| Original decoder behavior            |               —               |                           ✅                          |
+| **Primary focus**                    | Asset inspection & extraction | **Improved inspection, reconstruction & extraction** |
 
 ---
 
@@ -71,7 +148,7 @@ AssetStudio 2 is based on the original AssetStudio architecture and aims to supp
 
 **Unity 3.4 – 2022.1**
 
-> Support for individual Unity versions and asset formats may vary depending on the asset and Unity features used by a particular game.
+> Support for individual Unity versions and asset formats may vary depending on the assets and Unity features used by a particular game.
 
 ---
 
@@ -105,7 +182,7 @@ AssetStudio 2 supports the asset types available in the original AssetStudio, in
 * **Mesh**
 
   * OBJ
-  * Additional model export functionality
+  * Reconstructed GameObject meshes
 * **TextAsset**
 * **Shader**
 * **MovieTexture**
@@ -118,13 +195,9 @@ AssetStudio 2 supports the asset types available in the original AssetStudio, in
   * FBX
   * AnimationClip support
 
-Additional support may vary depending on the Unity version and asset configuration.
-
 ---
 
 # 💻 Requirements
-
-AssetStudio 2 currently targets:
 
 ### AssetStudio.net472
 
@@ -144,7 +217,7 @@ Use:
 
 **File → Load file**
 
-or
+or:
 
 **File → Load folder**
 
@@ -158,7 +231,7 @@ If memory usage becomes an issue, use:
 
 **File → Extract file**
 
-or
+or:
 
 **File → Extract folder**
 
@@ -206,6 +279,67 @@ Alternatively, Animator assets can be exported with selected AnimationClips thro
 **Export → Export Animator with selected AnimationClip**
 
 Hold **Ctrl** to select multiple compatible assets when necessary.
+
+---
+
+# 🧩 GameObject Mesh Reconstruction
+
+AssetStudio 2.0.17 introduces automatic reconstruction of complex GameObjects.
+
+When possible, AssetStudio 2 analyzes the relationships between meshes, GameObjects, transforms, containers, and other serialized data.
+
+For example:
+
+```text
+Vehicle
+├── Main Body
+├── Interior
+├── Dashboard
+├── Steering Wheel
+├── Wheel FL
+├── Wheel FR
+├── Wheel RL
+├── Wheel RR
+└── Other Components
+```
+
+AssetStudio 2 attempts to determine how these meshes were positioned in the original GameObject and reconstruct them accordingly.
+
+The result is intended to more closely represent the **complete object as it existed inside the Unity game**, rather than a collection of unrelated individual meshes.
+
+### Reconstruction Process
+
+Conceptually, the process is:
+
+```text
+Unity Assets
+     ↓
+Find related GameObjects
+     ↓
+Find associated meshes
+     ↓
+Read transforms
+     ↓
+Identify relationships
+     ↓
+Align components
+     ↓
+Reconstruct GameObject
+     ↓
+Export complete model
+```
+
+The exact results depend on how the game stores its GameObjects and assets.
+
+---
+
+# 🔊 Audio Playback
+
+AssetStudio 2.0.17 adds playback-speed controls for supported `AudioClip` previews.
+
+This allows you to inspect audio at different speeds without changing the original asset.
+
+**Playback speed is a preview feature only.**
 
 ---
 
@@ -293,6 +427,50 @@ AssetStudio 2 is provided as an independent, community-developed project.
 The developers of AssetStudio 2 are not responsible for how the software is used.
 
 **Do not use AssetStudio 2 to infringe copyrights, violate software licenses, or extract assets from software without appropriate permission.**
+
+---
+
+# 🎯 Project Goals
+
+AssetStudio 2 aims to become a more capable and convenient Unity asset inspection and extraction tool while preserving the simplicity that made the original AssetStudio useful.
+
+The project's main goals are:
+
+* 🔍 **Better asset inspection**
+* 🖼️ **Better texture decoding**
+* 🧊 **Better mesh visualization**
+* 🧩 **GameObject reconstruction**
+* 🎨 **Automatic texture/material association**
+* 📦 **Simpler model + texture extraction**
+* 🔊 **Improved audio inspection**
+* 🛠️ **Improved compatibility and stability**
+* 🔄 **Preservation of original AssetStudio behavior where possible**
+
+---
+
+# 📌 Version History
+
+## 0.17 — Latest
+
+### New Features
+
+* **GameObject Mesh Reconstruction**
+
+  * Combines related meshes into the GameObject structure used by the original game.
+  * Scans related containers and asset relationships for additional meshes.
+  * Aligns components such as interiors, wheels, and other parts with the main mesh.
+  * Designed for complex multi-part objects such as cars and other vehicles.
+
+* **Audio Playback Speed**
+
+  * Allows supported audio previews to be played at different speeds.
+  * Does not modify the original audio asset.
+
+### Improvements
+
+* Improved asset handling.
+* Additional mesh and texture association improvements.
+* Additional bug fixes and stability improvements.
 
 ---
 
