@@ -38,6 +38,52 @@ namespace AssetStudioGUI
         private DirectBitmap imageTexture;
         private string tempClipboard;
 
+        #region CombinedMeshParts (AssetStudio 2)
+        // Overlay panel on top of glControl1 letting the user hide individual parts of a
+        // combined GameObject/Mesh preview, and export only what's currently visible.
+        private Panel meshPartsPanel;
+        private CheckedListBox meshPartsCheckedListBox;
+        private Button exportVisiblePartsButton;
+        private Label meshPartsLabel;
+        private List<GameObjectMeshCombiner.CombinedPart> currentCombinedParts;
+        private GameObject currentCombinedRootGameObject;
+        private readonly HashSet<long> hiddenPartPathIDs = new HashSet<long>();
+
+        private sealed class MeshPartListItem
+        {
+            public readonly string Label;
+            public readonly long PathID;
+            public MeshPartListItem(string label, long pathID) { Label = label; PathID = pathID; }
+            public override string ToString() => Label;
+        }
+        #endregion
+
+        #region AnimationPreview (AssetStudio 2 - Feature 3)
+        // Overlay panel with playback controls (play/pause, scrub bar, speed, loop) shown on
+        // top of glControl1 whenever an AnimationClip (or Animator) is previewed. Driven by
+        // animationPreviewTimer, which advances animationPreviewTime and re-skins the rig each
+        // tick - see AnimationPreview.cs for the actual rig/clip/skinning logic.
+        private Panel animationControlsPanel;
+        private Button animationPlayPauseButton;
+        private TrackBar animationScrubBar;
+        private Label animationTimeLabel;
+        private ComboBox animationSpeedCombo;
+        private CheckBox animationLoopCheckBox;
+        private ComboBox animationClipSelector;
+
+        private AnimationPreview.Rig currentAnimationRig;
+        private List<AnimationClip> currentAnimationClipCandidates;
+        private AnimationPreview.DecodedClip currentDecodedClip;
+        private System.Windows.Forms.Timer animationPreviewTimer;
+        private float animationPreviewTime;
+        private bool animationPreviewPlaying;
+        private float animationPreviewSpeed = 1.0f;
+        private bool animationPreviewLoop = true;
+        private DateTime animationPreviewLastTick;
+        private bool suppressAnimationScrubEvent;
+        private bool animationBoundsFitted;
+        #endregion
+
         private FMOD.System system;
         private FMOD.Sound sound;
         private FMOD.Channel channel;
@@ -45,6 +91,19 @@ namespace AssetStudioGUI
         private FMOD.MODE loopMode = FMOD.MODE.LOOP_OFF;
         private uint FMODlenms;
         private float FMODVolume = 0.8f;
+
+        #region FMOD extras (AssetStudio 2 - Feature 5: waveform scrubbing + speed/pitch)
+        // Waveform preview drawn above the FMOD transport, built once per clip from the
+        // decoded PCM FMOD already holds in memory (see GenerateFMODWaveform). Click/drag
+        // on it scrubs playback, mirroring FMODprogressBar's behavior but with a visual.
+        private PictureBox FMODwaveformBox;
+        private ComboBox FMODspeedCombo;
+        private float[] FMODwaveformMin;
+        private float[] FMODwaveformMax;
+        private uint FMODbaseFrequency; // clip's native frequency, so speed changes are relative to it
+        private float FMODSpeed = 1.0f;
+        private bool FMODwaveformScrubbing;
+        #endregion
 
         #region TexControl
         private static char[] textureChannelNames = new[] { 'B', 'G', 'R', 'A' };
@@ -89,10 +148,13 @@ namespace AssetStudioGUI
         private float freeCamYaw = (float)-Math.PI / 2; //looking down -Z initially
         private float freeCamPitch;
         private float freeCamSpeed = 2.0f; //units/second, adjustable with scroll wheel
+        private Vector3 freeCamVelocity; //current smoothed velocity, for Unity-style accel/decel
+        private const float FreeCamAccel = 12f; //how fast we ramp up to target speed
+        private const float FreeCamDecel = 10f; //how fast we coast to a stop after keys are released
         private readonly HashSet<Keys> freeCamKeysDown = new HashSet<Keys>();
         private System.Windows.Forms.Timer freeCamTimer;
         private DateTime freeCamLastTick;
-        private bool freeCamLooking; //right-mouse-drag = look, matches existing scheme
+        private bool freeCamLooking; //right-mouse-button held = look + fly, matches Unity's Scene view flythrough
         private int normalMode;
         //AssetStudio 2: mesh + texture preview (per-submesh, one texture per submesh)
         private List<int> submeshTextureIds = new List<int>();
@@ -121,11 +183,20 @@ namespace AssetStudioGUI
         [DllImport("gdi32.dll")]
         private static extern IntPtr AddFontMemResourceEx(IntPtr pbFont, uint cbFont, IntPtr pdv, [In] ref uint pcFonts);
 
+        // AssetStudio 2: display version string shown in the title bar. Kept separate from the
+        // numeric assembly/file version (which must stay a strict X.X.X.X for .NET) so the
+        // title bar can show a human-friendly label like "Release 1.0" instead of "1.0.0.0".
+        private const string AppDisplayVersion = "Release 1.0";
+
         public AssetStudioGUIForm()
         {
             Thread.CurrentThread.CurrentCulture = new CultureInfo("en-US");
             InitializeComponent();
-            Text = $"AssetStudio 2 v{Application.ProductVersion}";
+            InitMeshPartsPanel();
+            InitAnimationControlsPanel();
+            InitFMODWaveformControls();
+            InitScriptMappingMenu();
+            Text = $"AssetStudio 2 {AppDisplayVersion}";
             delayTimer = new System.Timers.Timer(800);
             delayTimer.Elapsed += new ElapsedEventHandler(delayTimer_Elapsed);
             displayAll.Checked = Properties.Settings.Default.displayAll;
@@ -245,11 +316,11 @@ namespace AssetStudioGUI
 
             if (!string.IsNullOrEmpty(productName))
             {
-                Text = $"AssetStudio 2 v{Application.ProductVersion} - {productName} - {assetsManager.assetsFileList[0].unityVersion} - {assetsManager.assetsFileList[0].m_TargetPlatform}";
+                Text = $"AssetStudio 2 {AppDisplayVersion} - {productName} - {assetsManager.assetsFileList[0].unityVersion} - {assetsManager.assetsFileList[0].m_TargetPlatform}";
             }
             else
             {
-                Text = $"AssetStudio 2 v{Application.ProductVersion} - no productName - {assetsManager.assetsFileList[0].unityVersion} - {assetsManager.assetsFileList[0].m_TargetPlatform}";
+                Text = $"AssetStudio 2 {AppDisplayVersion} - no productName - {assetsManager.assetsFileList[0].unityVersion} - {assetsManager.assetsFileList[0].m_TargetPlatform}";
             }
 
             assetListView.VirtualListSize = visibleAssets.Count;
@@ -348,7 +419,26 @@ namespace AssetStudioGUI
                 }
                 else if (freeCamMode)
                 {
-                    FreeCam_KeyDown(e.KeyCode, e.Shift);
+                    if (e.KeyCode == Keys.F)
+                    {
+                        // AssetStudio 2 - Feature 8: Unity-style "F to frame" - snaps the
+                        // freecam back to a good distance from the origin (where every mesh
+                        // preview is centered via modelMatrixData) along the current look
+                        // direction, without touching yaw/pitch, so you can back out of a
+                        // model you've flown inside of or gotten lost around.
+                        FreeCamFrameOrigin();
+                    }
+                    else
+                    {
+                        FreeCam_KeyDown(e.KeyCode, e.Shift);
+                    }
+                }
+                else if (e.KeyCode == Keys.Space && animationControlsPanel != null && animationControlsPanel.Visible)
+                {
+                    // AssetStudio 2: Space toggles animation playback when the animation
+                    // controls are showing, matching the play/pause button.
+                    ToggleAnimationPlayback();
+                    e.Handled = true;
                 }
             }
             else if (previewPanel.Visible)
@@ -744,6 +834,9 @@ namespace AssetStudioGUI
             fontPreviewBox.Visible = false;
             FMODpanel.Visible = false;
             glControl1.Visible = false;
+            if (meshPartsPanel != null) meshPartsPanel.Visible = false;
+            currentCombinedParts = null;
+            currentCombinedRootGameObject = null;
             StatusStripUpdate("");
 
             FMODreset();
@@ -777,6 +870,9 @@ namespace AssetStudioGUI
             fontPreviewBox.Visible = false;
             FMODpanel.Visible = false;
             glControl1.Visible = false;
+            if (meshPartsPanel != null) meshPartsPanel.Visible = false;
+            currentCombinedParts = null;
+            currentCombinedRootGameObject = null;
             StatusStripUpdate("");
             if (e.IsSelected)
             {
@@ -791,12 +887,21 @@ namespace AssetStudioGUI
                 ChangeGLSize(glControl1.Size);
                 glControl1.Invalidate();
             }
+            PositionMeshPartsPanel();
+            PositionAnimationControlsPanel();
         }
 
         private void PreviewAsset(AssetItem assetItem)
         {
             if (assetItem == null)
                 return;
+            // AssetStudio 2: any selection that isn't an AnimationClip/Animator should stop
+            // playback and hide the animation controls panel; each PreviewX below that *is*
+            // animation-related re-shows/re-populates it as needed.
+            if (!(assetItem.Asset is AnimationClip) && !(assetItem.Asset is Animator))
+            {
+                StopAnimationPreview();
+            }
             try
             {
                 switch (assetItem.Asset)
@@ -816,6 +921,9 @@ namespace AssetStudioGUI
                     case MonoBehaviour m_MonoBehaviour:
                         PreviewMonoBehaviour(m_MonoBehaviour);
                         break;
+                    case MonoScript m_MonoScript:
+                        PreviewMonoScript(m_MonoScript);
+                        break;
                     case Font m_Font:
                         PreviewFont(m_Font);
                         break;
@@ -832,11 +940,14 @@ namespace AssetStudioGUI
                     case Sprite m_Sprite:
                         PreviewSprite(assetItem, m_Sprite);
                         break;
-                    case Animator _:
-                        StatusStripUpdate("Can be exported to FBX file.");
+                    case Material m_Material:
+                        PreviewMaterial(assetItem, m_Material);
                         break;
-                    case AnimationClip _:
-                        StatusStripUpdate("Can be exported with Animator or Objects");
+                    case Animator m_Animator:
+                        PreviewAnimator(m_Animator, null);
+                        break;
+                    case AnimationClip m_AnimationClip:
+                        PreviewAnimationClip(m_AnimationClip);
                         break;
                     default:
                         var str = assetItem.Asset.Dump();
@@ -854,7 +965,78 @@ namespace AssetStudioGUI
             }
         }
 
-        private void PreviewTexture2D(AssetItem assetItem, Texture2D m_Texture2D)
+        // AssetStudio 2 - Feature 6: Material preview. Materials previously fell through to the
+        // generic "default: dump text" case with no shader/property/texture summary and no
+        // thumbnail. This resolves the shader name and every color/float/texture property via
+        // the material's PPtrs, lists them in the info panel, and shows whichever texture looks
+        // like the main one (falling back to the first texture slot) as an image thumbnail
+        // through the same PreviewTexture(DirectBitmap) path Texture2D preview uses.
+        private static readonly string[] LikelyMainTexNames = { "_MainTex", "_BaseMap", "_BaseColorMap", "_Albedo", "_AlbedoMap" };
+
+        private void PreviewMaterial(AssetItem assetItem, Material m_Material)
+        {
+            var sb = new StringBuilder();
+            string shaderName = "Unknown";
+            if (m_Material.m_Shader != null && m_Material.m_Shader.TryGet(out var shader))
+            {
+                shaderName = shader.m_Name;
+            }
+            sb.Append("Shader: ").Append(shaderName);
+
+            var props = m_Material.m_SavedProperties;
+            KeyValuePair<string, UnityTexEnv>? mainTexEntry = null;
+            if (props != null)
+            {
+                if (props.m_TexEnvs != null && props.m_TexEnvs.Length > 0)
+                {
+                    sb.Append("\nTextures: ");
+                    foreach (var kv in props.m_TexEnvs)
+                    {
+                        var hasTex = kv.Value?.m_Texture != null && kv.Value.m_Texture.m_PathID != 0;
+                        sb.Append('\n').Append("  ").Append(kv.Key).Append(hasTex ? "" : " (none)");
+                        if (hasTex && (mainTexEntry == null || LikelyMainTexNames.Contains(kv.Key)))
+                        {
+                            mainTexEntry = kv;
+                        }
+                    }
+                }
+                if (props.m_Colors != null && props.m_Colors.Length > 0)
+                {
+                    sb.Append("\nColors: ");
+                    foreach (var kv in props.m_Colors)
+                    {
+                        sb.Append('\n').Append("  ").Append(kv.Key).Append(" = ")
+                          .Append($"({kv.Value.R:0.###}, {kv.Value.G:0.###}, {kv.Value.B:0.###}, {kv.Value.A:0.###})");
+                    }
+                }
+                if (props.m_Floats != null && props.m_Floats.Length > 0)
+                {
+                    sb.Append("\nFloats: ");
+                    foreach (var kv in props.m_Floats)
+                    {
+                        sb.Append('\n').Append("  ").Append(kv.Key).Append(" = ").Append(kv.Value.ToString("0.###", CultureInfo.InvariantCulture));
+                    }
+                }
+            }
+            assetItem.InfoText = sb.ToString();
+
+            if (mainTexEntry != null && mainTexEntry.Value.Value.m_Texture.TryGet<Texture2D>(out var tex2d))
+            {
+                var image = tex2d.ConvertToImage(true);
+                if (image != null)
+                {
+                    var bitmap = new DirectBitmap(image.ConvertToBytes(), tex2d.m_Width, tex2d.m_Height);
+                    image.Dispose();
+                    PreviewTexture(bitmap);
+                    StatusStripUpdate($"Material preview: showing '{mainTexEntry.Value.Key}'");
+                    return;
+                }
+            }
+
+            StatusStripUpdate("Material preview: no texture to display, see info panel for properties");
+        }
+
+
         {
             var image = m_Texture2D.ConvertToImage(true);
             if (image != null)
@@ -1036,6 +1218,13 @@ namespace AssetStudioGUI
 
             FMODinfoLabel.Text = frequency + " Hz";
             FMODtimerLabel.Text = $"0:0.0 / {FMODlenms / 1000 / 60}:{FMODlenms / 1000 % 60}.{FMODlenms / 10 % 100}";
+
+            //AssetStudio 2 - Feature 5: waveform + speed/pitch.
+            FMODbaseFrequency = (uint)frequency;
+            if (FMODspeedCombo != null) { FMODspeedCombo.SelectedIndex = 2; } // reset to 1x for the new clip
+            FMODSpeed = 1.0f;
+            GenerateFMODWaveform(sound);
+            FMODwaveformBox?.Invalidate();
         }
 
         private void PreviewShader(Shader m_Shader)
@@ -1061,6 +1250,101 @@ namespace AssetStudioGUI
             }
             var str = JsonConvert.SerializeObject(obj, Formatting.Indented);
             PreviewText(str);
+        }
+
+        // AssetStudio 2: preview for a MonoScript asset itself (as opposed to a MonoBehaviour
+        // instance of it). Auto-maps the script's fields straight from the game's managed
+        // assemblies (no manual DLL browsing needed - see Studio.EnsureAssembliesAutoLoaded)
+        // and cross-references every loaded MonoBehaviour instance that uses this script.
+        private void PreviewMonoScript(MonoScript m_MonoScript)
+        {
+            var fullName = string.IsNullOrEmpty(m_MonoScript.m_Namespace)
+                ? m_MonoScript.m_ClassName
+                : $"{m_MonoScript.m_Namespace}.{m_MonoScript.m_ClassName}";
+
+            var sb = new StringBuilder();
+            sb.AppendLine($"Class:    {fullName}");
+            sb.AppendLine($"Assembly: {m_MonoScript.m_AssemblyName}");
+            sb.AppendLine();
+
+            EnsureAssembliesAutoLoaded();
+            if (!assemblyLoader.Loaded)
+            {
+                sb.AppendLine("Fields: unavailable - couldn't auto-detect a 'Managed' folder next to the loaded files.");
+                sb.AppendLine("Use Options > Load assembly folder for script mapping... to map fields manually.");
+            }
+            else
+            {
+                var typeDef = assemblyLoader.GetTypeDefinition(m_MonoScript.m_AssemblyName, fullName);
+                if (typeDef == null)
+                {
+                    sb.AppendLine($"Fields: unavailable - '{fullName}' wasn't found in the loaded assemblies.");
+                    sb.AppendLine("(mismatched build, obfuscated names, or an IL2CPP build with no per-script DLLs)");
+                }
+                else
+                {
+                    sb.AppendLine("Fields (auto-mapped from assembly metadata):");
+                    try
+                    {
+                        var helper = new SerializedTypeHelper(m_MonoScript.version);
+                        var converter = new TypeDefinitionConverter(typeDef, helper, 1);
+                        var fieldNodes = converter.ConvertToTypeTreeNodes().ToList();
+                        if (fieldNodes.Count == 0)
+                        {
+                            sb.AppendLine("  (no serialized fields)");
+                        }
+                        else
+                        {
+                            foreach (var node in fieldNodes)
+                            {
+                                sb.AppendLine(new string(' ', Math.Max(0, node.m_Level - 1) * 4) + node.m_Type + " " + node.m_Name);
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        sb.AppendLine("  Failed to map fields: " + ex.Message);
+                    }
+                }
+            }
+
+            var instances = FindMonoBehavioursUsingScript(m_MonoScript);
+            sb.AppendLine();
+            if (instances.Count == 0)
+            {
+                sb.AppendLine("No loaded MonoBehaviour instances reference this script.");
+            }
+            else
+            {
+                sb.AppendLine($"Used by {instances.Count} loaded MonoBehaviour instance(s):");
+                foreach (var inst in instances.Take(100))
+                {
+                    sb.AppendLine("  - " + (string.IsNullOrEmpty(inst.m_Name) ? "(unnamed)" : inst.m_Name));
+                }
+                if (instances.Count > 100) sb.AppendLine($"  ... and {instances.Count - 100} more");
+            }
+
+            PreviewText(sb.ToString());
+        }
+
+        // Scans every loaded file for MonoBehaviour instances whose m_Script points at this
+        // MonoScript. Mirrors the reference-equality lookup GameObjectMeshCombiner uses for
+        // meshes - deserialized assets are cached per PathID by AssetsManager, so a plain "=="
+        // is enough (no cross-file PathID bookkeeping needed).
+        private static List<MonoBehaviour> FindMonoBehavioursUsingScript(MonoScript script)
+        {
+            var result = new List<MonoBehaviour>();
+            foreach (var assetsFile in assetsManager.assetsFileList)
+            {
+                foreach (var obj in assetsFile.Objects)
+                {
+                    if (obj is MonoBehaviour mb && mb.m_Script.TryGet(out var s) && s == script)
+                    {
+                        result.Add(mb);
+                    }
+                }
+            }
+            return result;
         }
 
         private void PreviewFont(Font m_Font)
@@ -1113,6 +1397,129 @@ namespace AssetStudioGUI
             StatusStripUpdate("Unsupported font for preview. Try to export.");
         }
 
+        // AssetStudio 2: manual override/fallback for script field mapping, next to the
+        // existing "Combine sibling meshes" option. Auto-mapping (Studio.EnsureAssembliesAutoLoaded)
+        // covers the common case; this lets the user point at a Managed folder by hand when
+        // auto-detection can't find one (bundle-only exports, unusual folder layouts, etc.).
+        private void InitScriptMappingMenu()
+        {
+            var loadAssembliesItem = new ToolStripMenuItem("Load assembly folder for script mapping...");
+            loadAssembliesItem.Click += (s, e) =>
+            {
+                var dlg = new OpenFolderDialog { Title = "Select Managed Assembly Folder" };
+                if (dlg.ShowDialog(this) != DialogResult.OK) return;
+
+                assemblyLoader.Clear();
+                assemblyLoader.Load(dlg.Folder);
+                StatusStripUpdate(assemblyLoader.Loaded
+                    ? $"Loaded assemblies from: {dlg.Folder}"
+                    : "No assemblies found in that folder.");
+
+                if (lastSelectedItem != null) PreviewAsset(lastSelectedItem);
+            };
+            optionsToolStripMenuItem.DropDownItems.Add(loadAssembliesItem);
+        }
+
+        // AssetStudio 2: builds the "parts" overlay (checklist + export button) purely in code
+        // and docks it on top of glControl1 inside previewPanel, so the visual designer file
+        // doesn't need to be touched. Called once from the constructor, after InitializeComponent.
+        private void InitMeshPartsPanel()
+        {
+            meshPartsPanel = new Panel
+            {
+                BackColor = Color.FromArgb(235, 32, 32, 32),
+                Width = 230,
+                Visible = false
+            };
+            meshPartsLabel = new Label
+            {
+                Text = "Parts (uncheck to hide)",
+                Dock = DockStyle.Top,
+                ForeColor = Color.White,
+                Height = 22,
+                TextAlign = ContentAlignment.MiddleLeft,
+                Padding = new Padding(4, 0, 0, 0)
+            };
+            exportVisiblePartsButton = new Button
+            {
+                Text = "Export Visible...",
+                Dock = DockStyle.Bottom,
+                Height = 28
+            };
+            exportVisiblePartsButton.Click += exportVisiblePartsButton_Click;
+            meshPartsCheckedListBox = new CheckedListBox
+            {
+                Dock = DockStyle.Fill,
+                CheckOnClick = true,
+                BackColor = Color.FromArgb(45, 45, 45),
+                ForeColor = Color.White,
+                BorderStyle = BorderStyle.None
+            };
+            meshPartsCheckedListBox.ItemCheck += meshPartsCheckedListBox_ItemCheck;
+
+            meshPartsPanel.Controls.Add(meshPartsCheckedListBox);
+            meshPartsPanel.Controls.Add(exportVisiblePartsButton);
+            meshPartsPanel.Controls.Add(meshPartsLabel);
+
+            previewPanel.Controls.Add(meshPartsPanel);
+            meshPartsPanel.BringToFront();
+            PositionMeshPartsPanel();
+        }
+
+        // Keeps the overlay pinned to the top-right corner of the preview area, full height.
+        private void PositionMeshPartsPanel()
+        {
+            if (meshPartsPanel == null || previewPanel == null) return;
+            meshPartsPanel.Location = new Point(Math.Max(0, previewPanel.ClientSize.Width - meshPartsPanel.Width), 0);
+            meshPartsPanel.Height = previewPanel.ClientSize.Height;
+        }
+
+        // A part's checkbox changed - update the hidden set and re-render immediately.
+        private void meshPartsCheckedListBox_ItemCheck(object sender, ItemCheckEventArgs e)
+        {
+            if (e.Index < 0 || e.Index >= meshPartsCheckedListBox.Items.Count) return;
+            if (!(meshPartsCheckedListBox.Items[e.Index] is MeshPartListItem item)) return;
+
+            if (e.NewValue == CheckState.Unchecked) hiddenPartPathIDs.Add(item.PathID);
+            else hiddenPartPathIDs.Remove(item.PathID);
+
+            // ItemCheck fires just before the state is actually committed; render on the next
+            // tick so CreateVAO() etc. don't race the checkbox's own visual update.
+            BeginInvoke((MethodInvoker)RenderCombinedParts);
+        }
+
+        // Exports the combined object, leaving out whatever parts are currently unchecked.
+        private void exportVisiblePartsButton_Click(object sender, EventArgs e)
+        {
+            if (currentCombinedRootGameObject == null)
+            {
+                StatusStripUpdate("Nothing to export.");
+                return;
+            }
+            if (hiddenPartPathIDs.Count == currentCombinedParts?.Count)
+            {
+                StatusStripUpdate("All parts are hidden - nothing to export.");
+                return;
+            }
+
+            var saveFolderDialog = new OpenFolderDialog();
+            saveFolderDialog.InitialFolder = saveDirectoryBackup;
+            if (saveFolderDialog.ShowDialog(this) != DialogResult.OK) return;
+            saveDirectoryBackup = saveFolderDialog.Folder;
+            var exportPath = Path.Combine(saveFolderDialog.Folder, "GameObject") + Path.DirectorySeparatorChar;
+
+            try
+            {
+                Exporter.ExportGameObject(currentCombinedRootGameObject, exportPath, null, new HashSet<long>(hiddenPartPathIDs));
+                var shown = (currentCombinedParts?.Count ?? 0) - hiddenPartPathIDs.Count;
+                StatusStripUpdate($"Exported {shown}/{currentCombinedParts?.Count ?? 0} visible parts to {exportPath}");
+            }
+            catch (Exception ex)
+            {
+                StatusStripUpdate("Export failed: " + ex.Message);
+            }
+        }
+
         // AssetStudio 2: entry point for selecting a GameObject directly in the tree - always
         // combines every mesh under it (ignores the toggle, since there's no "single mesh"
         // fallback to speak of here).
@@ -1132,45 +1539,96 @@ namespace AssetStudioGUI
                     StatusStripUpdate("No meshes found under this GameObject.");
                     return;
                 }
-                var combined = GameObjectMeshCombiner.Combine(parts);
-                if (combined.Vertices.Length == 0)
-                {
-                    StatusStripUpdate("GameObject meshes can't be previewed.");
-                    return;
-                }
 
-                viewMatrixData = Matrix4.CreateRotationY(-(float)Math.PI / 4) * Matrix4.CreateRotationX(-(float)Math.PI / 6);
-                vertexData = combined.Vertices;
-                normalData = combined.Normals;
-                normal2Data = combined.Normals;
-                colorData = combined.Colors;
-                indiceData = combined.Indices;
-                texCoordData = null; // no single Mesh to resolve submesh textures against here
-
-                float[] min = { vertexData[0].X, vertexData[0].Y, vertexData[0].Z };
-                float[] max = { vertexData[0].X, vertexData[0].Y, vertexData[0].Z };
-                foreach (var v in vertexData)
-                {
-                    min[0] = Math.Min(min[0], v.X); max[0] = Math.Max(max[0], v.X);
-                    min[1] = Math.Min(min[1], v.Y); max[1] = Math.Max(max[1], v.Y);
-                    min[2] = Math.Min(min[2], v.Z); max[2] = Math.Max(max[2], v.Z);
-                }
-                Vector3 dist = new Vector3(max[0] - min[0], max[1] - min[1], max[2] - min[2]);
-                Vector3 offset = new Vector3((max[0] + min[0]) / 2, (max[1] + min[1]) / 2, (max[2] + min[2]) / 2);
-                float d = Math.Max(1e-5f, dist.Length);
-                modelMatrixData = Matrix4.CreateTranslation(-offset) * Matrix4.CreateScale(2f / d);
-
-                glControl1.Visible = true;
-                CreateVAO();
-                StatusStripUpdate("Using OpenGL Version: " + GL.GetString(StringName.Version) + "\n"
-                                  + $"Combined preview ({parts.Count} meshes aligned into GameObject) \n"
-                                  + "'Mouse Left'=Rotate | 'Mouse Right'=Move | 'Mouse Wheel'=Zoom \n"
-                                  + "'Ctrl W'=Wireframe | 'Ctrl S'=Shade | 'Ctrl N'=ReNormal ");
+                currentCombinedParts = parts;
+                currentCombinedRootGameObject = root.m_GameObject.TryGet(out var rootGo) ? rootGo : m_GameObject;
+                PopulateMeshPartsList(parts);
+                RenderCombinedParts();
             }
             catch (Exception ex)
             {
                 StatusStripUpdate("Failed to preview GameObject: " + ex.Message);
             }
+        }
+
+        // AssetStudio 2: (re)builds the GL buffers from currentCombinedParts, skipping any part
+        // whose owning GameObject is in hiddenPartPathIDs. Shared by the initial combined preview
+        // and by the parts checklist whenever the user toggles a part on/off.
+        private void RenderCombinedParts()
+        {
+            if (currentCombinedParts == null || currentCombinedParts.Count == 0) return;
+
+            var combined = GameObjectMeshCombiner.Combine(currentCombinedParts, hiddenPartPathIDs);
+            if (combined.Vertices.Length == 0)
+            {
+                glControl1.Visible = false;
+                StatusStripUpdate("All parts hidden - nothing to preview.");
+                return;
+            }
+
+            viewMatrixData = Matrix4.CreateRotationY(-(float)Math.PI / 4) * Matrix4.CreateRotationX(-(float)Math.PI / 6);
+            vertexData = combined.Vertices;
+            normalData = combined.Normals;
+            normal2Data = combined.Normals;
+            colorData = combined.Colors;
+            indiceData = combined.Indices;
+            texCoordData = null; // no single Mesh to resolve submesh textures against here
+
+            float[] min = { vertexData[0].X, vertexData[0].Y, vertexData[0].Z };
+            float[] max = { vertexData[0].X, vertexData[0].Y, vertexData[0].Z };
+            foreach (var v in vertexData)
+            {
+                min[0] = Math.Min(min[0], v.X); max[0] = Math.Max(max[0], v.X);
+                min[1] = Math.Min(min[1], v.Y); max[1] = Math.Max(max[1], v.Y);
+                min[2] = Math.Min(min[2], v.Z); max[2] = Math.Max(max[2], v.Z);
+            }
+            Vector3 dist = new Vector3(max[0] - min[0], max[1] - min[1], max[2] - min[2]);
+            Vector3 offset = new Vector3((max[0] + min[0]) / 2, (max[1] + min[1]) / 2, (max[2] + min[2]) / 2);
+            float d = Math.Max(1e-5f, dist.Length);
+            modelMatrixData = Matrix4.CreateTranslation(-offset) * Matrix4.CreateScale(2f / d);
+
+            glControl1.Visible = true;
+            CreateVAO();
+            var shown = currentCombinedParts.Count - hiddenPartPathIDs.Count;
+            StatusStripUpdate("Using OpenGL Version: " + GL.GetString(StringName.Version) + "\n"
+                              + $"Combined preview ({shown}/{currentCombinedParts.Count} meshes shown) \n"
+                              + "'Mouse Left'=Rotate | 'Mouse Right'=Move | 'Mouse Wheel'=Zoom \n"
+                              + "'Ctrl W'=Wireframe | 'Ctrl S'=Shade | 'Ctrl N'=ReNormal ");
+        }
+
+        // AssetStudio 2: fills the overlay checklist with one entry per combined part (deduped
+        // display names get a "(2)", "(3)"... suffix) and shows/hides the overlay panel itself.
+        private void PopulateMeshPartsList(List<GameObjectMeshCombiner.CombinedPart> parts)
+        {
+            if (meshPartsCheckedListBox == null) return;
+
+            meshPartsCheckedListBox.ItemCheck -= meshPartsCheckedListBox_ItemCheck;
+            meshPartsCheckedListBox.Items.Clear();
+            hiddenPartPathIDs.Clear();
+
+            var seen = new Dictionary<string, int>();
+            foreach (var part in parts)
+            {
+                var label = string.IsNullOrEmpty(part.Name) ? "(unnamed)" : part.Name;
+                if (seen.TryGetValue(label, out var n))
+                {
+                    seen[label] = n + 1;
+                    label = $"{label} ({n + 1})";
+                }
+                else
+                {
+                    seen[label] = 0;
+                }
+                meshPartsCheckedListBox.Items.Add(new MeshPartListItem(label, part.GameObjectPathID), true);
+            }
+
+            meshPartsPanel.Visible = parts.Count > 1;
+            if (meshPartsPanel.Visible)
+            {
+                PositionMeshPartsPanel();
+                meshPartsPanel.BringToFront();
+            }
+            meshPartsCheckedListBox.ItemCheck += meshPartsCheckedListBox_ItemCheck;
         }
 
         private void PreviewMesh(Mesh m_Mesh)
@@ -1180,7 +1638,8 @@ namespace AssetStudioGUI
             // hierarchy (wheels, interior, etc.) into one combined buffer, aligned the same
             // way Unity assembles them at runtime. Falls back to the plain single-mesh
             // preview if the mesh isn't referenced by any loaded GameObject, or combining fails.
-            GameObjectMeshCombiner.CombinedMesh combined = null;
+            List<GameObjectMeshCombiner.CombinedPart> parts = null;
+            GameObject combinedRootGo = null;
             if (Properties.Settings.Default.combineMeshPreview)
             {
                 try
@@ -1191,54 +1650,36 @@ namespace AssetStudioGUI
                         var root = GameObjectMeshCombiner.FindRootTransform(owner);
                         if (root != null)
                         {
-                            var parts = GameObjectMeshCombiner.CollectParts(root);
-                            if (parts.Count > 1)
+                            var collected = GameObjectMeshCombiner.CollectParts(root);
+                            if (collected.Count > 1)
                             {
-                                combined = GameObjectMeshCombiner.Combine(parts);
+                                parts = collected;
+                                combinedRootGo = root.m_GameObject.TryGet(out var rootGo) ? rootGo : owner;
                             }
                         }
                     }
                 }
                 catch (Exception ex)
                 {
-                    combined = null;
+                    parts = null;
                     StatusStripUpdate("Combine preview failed, falling back to single mesh: " + ex.Message);
                 }
             }
 
-            if (combined != null && combined.Vertices.Length > 0)
+            if (parts != null)
             {
-                viewMatrixData = Matrix4.CreateRotationY(-(float)Math.PI / 4) * Matrix4.CreateRotationX(-(float)Math.PI / 6);
-
-                vertexData = combined.Vertices;
-                normalData = combined.Normals;
-                normal2Data = combined.Normals;
-                colorData = combined.Colors;
-                indiceData = combined.Indices;
-                texCoordData = (Properties.Settings.Default.previewMeshTexture && combined.HasUV) ? combined.UV0 : null;
-
-                float[] min = { vertexData[0].X, vertexData[0].Y, vertexData[0].Z };
-                float[] max = { vertexData[0].X, vertexData[0].Y, vertexData[0].Z };
-                foreach (var v in vertexData)
-                {
-                    min[0] = Math.Min(min[0], v.X); max[0] = Math.Max(max[0], v.X);
-                    min[1] = Math.Min(min[1], v.Y); max[1] = Math.Max(max[1], v.Y);
-                    min[2] = Math.Min(min[2], v.Z); max[2] = Math.Max(max[2], v.Z);
-                }
-                Vector3 dist = new Vector3(max[0] - min[0], max[1] - min[1], max[2] - min[2]);
-                Vector3 offset = new Vector3((max[0] + min[0]) / 2, (max[1] + min[1]) / 2, (max[2] + min[2]) / 2);
-                float d = Math.Max(1e-5f, dist.Length);
-                modelMatrixData = Matrix4.CreateTranslation(-offset) * Matrix4.CreateScale(2f / d);
-
-                glControl1.Visible = true;
-                UploadMeshPreviewTextures(m_Mesh);
-                CreateVAO();
-                StatusStripUpdate("Using OpenGL Version: " + GL.GetString(StringName.Version) + "\n"
-                                  + "Combined preview (" + "multiple meshes aligned into GameObject) \n"
-                                  + "'Mouse Left'=Rotate | 'Mouse Right'=Move | 'Mouse Wheel'=Zoom \n"
-                                  + "'Ctrl W'=Wireframe | 'Ctrl S'=Shade | 'Ctrl N'=ReNormal ");
+                currentCombinedParts = parts;
+                currentCombinedRootGameObject = combinedRootGo;
+                PopulateMeshPartsList(parts);
+                RenderCombinedParts();
                 return;
             }
+
+            // Not combining (toggle off, no owner found, or only a single part) - fall back to
+            // the plain single-mesh preview below, and make sure the parts overlay is hidden.
+            currentCombinedParts = null;
+            currentCombinedRootGameObject = null;
+            if (meshPartsPanel != null) meshPartsPanel.Visible = false;
 
             if (m_Mesh.m_VertexCount > 0)
             {
@@ -1458,9 +1899,10 @@ namespace AssetStudioGUI
 
         private void ResetForm()
         {
-            Text = $"AssetStudio 2 v{Application.ProductVersion}";
+            Text = $"AssetStudio 2 {AppDisplayVersion}";
             assetsManager.Clear();
             assemblyLoader.Clear();
+            ResetAssemblyAutoLoad();
             exportableAssets.Clear();
             visibleAssets.Clear();
             sceneTreeView.Nodes.Clear();
@@ -1477,6 +1919,11 @@ namespace AssetStudioGUI
             textPreviewBox.Visible = false;
             fontPreviewBox.Visible = false;
             glControl1.Visible = false;
+            if (meshPartsPanel != null) meshPartsPanel.Visible = false;
+            StopAnimationPreview();
+            currentCombinedParts = null;
+            currentCombinedRootGameObject = null;
+            hiddenPartPathIDs.Clear();
             lastSelectedItem = null;
             sortColumn = -1;
             reverseSort = false;
@@ -1889,6 +2336,13 @@ namespace AssetStudioGUI
                 ERRCHECK(result);
                 sound = null;
             }
+
+            //AssetStudio 2 - Feature 5: clear the waveform/speed state along with everything else.
+            FMODwaveformMin = null;
+            FMODwaveformMax = null;
+            FMODbaseFrequency = 0;
+            FMODSpeed = 1.0f;
+            FMODwaveformBox?.Invalidate();
         }
 
         private void FMODplayButton_Click(object sender, EventArgs e)
@@ -1909,6 +2363,7 @@ namespace AssetStudioGUI
 
                     result = system.playSound(sound, null, false, out channel);
                     if (ERRCHECK(result)) { return; }
+                    ApplyFMODSpeed();
 
                     FMODpauseButton.Text = "Pause";
                 }
@@ -1916,6 +2371,7 @@ namespace AssetStudioGUI
                 {
                     result = system.playSound(sound, null, false, out channel);
                     if (ERRCHECK(result)) { return; }
+                    ApplyFMODSpeed();
                     FMODstatusLabel.Text = "Playing";
 
                     if (FMODprogressBar.Value > 0)
@@ -2100,6 +2556,7 @@ namespace AssetStudioGUI
             FMODtimerLabel.Text = $"{ms / 1000 / 60}:{ms / 1000 % 60}.{ms / 10 % 100} / {FMODlenms / 1000 / 60}:{FMODlenms / 1000 % 60}.{FMODlenms / 10 % 100}";
             FMODprogressBar.Value = (int)(ms * 1000 / FMODlenms);
             FMODstatusLabel.Text = paused ? "Paused " : playing ? "Playing" : "Stopped";
+            FMODwaveformBox?.Invalidate(); // keep the playhead line in sync
 
             if (system != null && channel != null)
             {
@@ -2116,6 +2573,234 @@ namespace AssetStudioGUI
                 return true;
             }
             return false;
+        }
+        #endregion
+
+        #region FMOD waveform + speed/pitch (AssetStudio 2 - Feature 5)
+        // Built entirely in code and docked into FMODpanel, following the same pattern as
+        // InitAnimationControlsPanel/InitMeshPartsPanel, so the Designer-generated layout
+        // doesn't need to be touched.
+        private void InitFMODWaveformControls()
+        {
+            FMODwaveformBox = new PictureBox
+            {
+                BackColor = Color.FromArgb(24, 24, 24),
+                Location = new Point(213, 160),
+                Size = new Size(350, 60),
+                Cursor = Cursors.Hand
+            };
+            FMODwaveformBox.Paint += FMODwaveformBox_Paint;
+            FMODwaveformBox.MouseDown += FMODwaveformBox_MouseDown;
+            FMODwaveformBox.MouseMove += FMODwaveformBox_MouseMove;
+            FMODwaveformBox.MouseUp += FMODwaveformBox_MouseUp;
+            FMODpanel.Controls.Add(FMODwaveformBox);
+            FMODwaveformBox.BringToFront();
+
+            var speedLabel = new Label
+            {
+                Text = "Speed",
+                ForeColor = Color.White,
+                AutoSize = true,
+                Location = new Point(580, 284)
+            };
+            FMODpanel.Controls.Add(speedLabel);
+
+            FMODspeedCombo = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Width = 70,
+                Location = new Point(625, 280)
+            };
+            FMODspeedCombo.Items.AddRange(new object[] { "0.5x", "0.75x", "1x", "1.25x", "1.5x", "2x" });
+            FMODspeedCombo.SelectedIndex = 2;
+            FMODspeedCombo.SelectedIndexChanged += FMODspeedCombo_SelectedIndexChanged;
+            FMODpanel.Controls.Add(FMODspeedCombo);
+        }
+
+        private void FMODspeedCombo_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            var text = (string)FMODspeedCombo.SelectedItem;
+            if (!float.TryParse(text.TrimEnd('x'), NumberStyles.Float, CultureInfo.InvariantCulture, out var v))
+            {
+                return;
+            }
+            FMODSpeed = v;
+            ApplyFMODSpeed();
+        }
+
+        // Changing frequency changes both playback rate and pitch together (like a tape/turntable
+        // speed knob), which is the simplest correct way to do this with FMOD's low-level API
+        // without pulling in a separate time-stretching DSP.
+        private void ApplyFMODSpeed()
+        {
+            if (channel == null || FMODbaseFrequency == 0)
+            {
+                return;
+            }
+            var result = channel.setFrequency(FMODbaseFrequency * FMODSpeed);
+            ERRCHECK(result);
+        }
+
+        // Decodes the peak envelope of the currently-loaded FMOD sound into a fixed number of
+        // min/max buckets for waveform drawing. `sound` here is already a fully decoded in-memory
+        // PCM sample (FMOD's default for createSound without CREATECOMPRESSEDSAMPLE/CREATESTREAM),
+        // so we can safely lock/read it directly instead of re-decoding the source bytes ourselves.
+        private const int WaveformBuckets = 400;
+
+        private void GenerateFMODWaveform(FMOD.Sound targetSound)
+        {
+            FMODwaveformMin = null;
+            FMODwaveformMax = null;
+            if (targetSound == null || !targetSound.isValid())
+            {
+                return;
+            }
+
+            var result = targetSound.getFormat(out _, out var format, out var channels, out var bits);
+            if (result != FMOD.RESULT.OK || format != FMOD.SOUND_FORMAT.PCM16 || channels < 1)
+            {
+                return; // only handle the common 16-bit case; anything else just skips the waveform
+            }
+
+            result = targetSound.getLength(out var lenBytes, FMOD.TIMEUNIT.PCMBYTES);
+            if (result != FMOD.RESULT.OK || lenBytes == 0)
+            {
+                return;
+            }
+
+            result = targetSound.@lock(0, lenBytes, out var ptr1, out var ptr2, out var len1, out var len2);
+            if (result != FMOD.RESULT.OK)
+            {
+                return;
+            }
+
+            try
+            {
+                var sampleCount = (int)(len1 / 2) / channels; // 16-bit samples, interleaved per channel
+                if (sampleCount <= 0)
+                {
+                    return;
+                }
+                var min = new float[WaveformBuckets];
+                var max = new float[WaveformBuckets];
+                for (var i = 0; i < WaveformBuckets; i++)
+                {
+                    min[i] = 0f;
+                    max[i] = 0f;
+                }
+
+                var bytes = new byte[len1];
+                Marshal.Copy(ptr1, bytes, 0, (int)len1);
+
+                var samplesPerBucket = Math.Max(1, sampleCount / WaveformBuckets);
+                for (var i = 0; i < sampleCount; i++)
+                {
+                    var byteOffset = i * channels * 2;
+                    if (byteOffset + 1 >= bytes.Length) { break; }
+                    short s = (short)(bytes[byteOffset] | (bytes[byteOffset + 1] << 8));
+                    var v = s / 32768f;
+
+                    var bucket = Math.Min(WaveformBuckets - 1, i / samplesPerBucket);
+                    if (v < min[bucket]) { min[bucket] = v; }
+                    if (v > max[bucket]) { max[bucket] = v; }
+                }
+
+                FMODwaveformMin = min;
+                FMODwaveformMax = max;
+            }
+            finally
+            {
+                targetSound.unlock(ptr1, ptr2, len1, len2);
+            }
+        }
+
+        private void FMODwaveformBox_Paint(object sender, PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            var w = FMODwaveformBox.Width;
+            var h = FMODwaveformBox.Height;
+            var midY = h / 2f;
+            g.Clear(FMODwaveformBox.BackColor);
+
+            if (FMODwaveformMin == null || FMODwaveformMax == null)
+            {
+                using (var emptyBrush = new SolidBrush(Color.Gray))
+                {
+                    g.DrawString("No waveform available", DefaultFont, emptyBrush, 6, midY - 6);
+                }
+                return;
+            }
+
+            using (var waveBrush = new SolidBrush(Color.FromArgb(90, 170, 250)))
+            using (var playPen = new Pen(Color.White, 1.5f))
+            {
+                var barWidth = Math.Max(1f, (float)w / WaveformBuckets);
+                for (var i = 0; i < WaveformBuckets; i++)
+                {
+                    var x = i * barWidth;
+                    var yTop = midY - FMODwaveformMax[i] * midY;
+                    var yBot = midY - FMODwaveformMin[i] * midY;
+                    g.FillRectangle(waveBrush, x, yTop, Math.Max(1f, barWidth - 0.5f), Math.Max(1f, yBot - yTop));
+                }
+
+                if (FMODlenms > 0)
+                {
+                    var ratio = FMODprogressBar.Value / 1000f;
+                    var playX = ratio * w;
+                    g.DrawLine(playPen, playX, 0, playX, h);
+                }
+            }
+        }
+
+        private void FMODwaveformBox_MouseDown(object sender, MouseEventArgs e)
+        {
+            if (channel == null || FMODlenms == 0)
+            {
+                return;
+            }
+            FMODwaveformScrubbing = true;
+            timer.Stop();
+            SeekFMODToRatio(e.X / (float)FMODwaveformBox.Width);
+        }
+
+        private void FMODwaveformBox_MouseMove(object sender, MouseEventArgs e)
+        {
+            if (!FMODwaveformScrubbing)
+            {
+                return;
+            }
+            SeekFMODToRatio(e.X / (float)FMODwaveformBox.Width);
+        }
+
+        private void FMODwaveformBox_MouseUp(object sender, MouseEventArgs e)
+        {
+            if (!FMODwaveformScrubbing)
+            {
+                return;
+            }
+            FMODwaveformScrubbing = false;
+            if (channel != null)
+            {
+                var result = channel.isPlaying(out var playing);
+                if (result == FMOD.RESULT.OK && playing) { timer.Start(); }
+            }
+        }
+
+        private void SeekFMODToRatio(float ratio)
+        {
+            ratio = Math.Max(0f, Math.Min(1f, ratio));
+            FMODprogressBar.Value = (int)(ratio * 1000);
+            var newms = (uint)(FMODlenms * ratio);
+            FMODtimerLabel.Text = $"{newms / 1000 / 60}:{newms / 1000 % 60}.{newms / 10 % 100}/{FMODlenms / 1000 / 60}:{FMODlenms / 1000 % 60}.{FMODlenms / 10 % 100}";
+            if (channel != null)
+            {
+                var result = channel.setPosition(newms, FMOD.TIMEUNIT.MS);
+                if ((result != FMOD.RESULT.OK) && (result != FMOD.RESULT.ERR_INVALID_HANDLE))
+                {
+                    ERRCHECK(result);
+                }
+            }
+            FMODwaveformBox?.Invalidate();
         }
         #endregion
 
@@ -2573,12 +3258,18 @@ namespace AssetStudioGUI
         }
 
         #region FreeCam
-        //AssetStudio 2: Freecam preview mode.
-        //Toggle with Ctrl+F while the 3D preview is focused. Hold right mouse button
-        //and drag to look around, WASD (+Q/E for down/up) to fly, Shift to move faster,
-        //mouse wheel to adjust fly speed. Existing orbit-camera mouse handlers
-        //(glControl1_MouseDown/Move/Up/Wheel) are left untouched for non-freecam use;
-        //this region only intercepts input when freeCamMode is true.
+        //AssetStudio 2: Freecam preview mode, modeled on Unity's Scene view "flythrough" camera.
+        //Toggle with Ctrl+F while the 3D preview is focused.
+        //  - Hold Right Mouse Button to look around AND fly with WASD/QE (exactly like Unity:
+        //    WASD/QE do nothing unless RMB is held).
+        //  - Shift while flying = sprint (3x), Ctrl while flying = slow/precise (0.3x).
+        //  - Mouse wheel while RMB is held adjusts fly speed (Unity does this too).
+        //  - Mouse wheel while RMB is NOT held dollies the camera forward/backward, like
+        //    scrolling in Unity's Scene view when you're not in flythrough mode.
+        //  - Movement eases in/out (accelerates while a key is held, coasts to a stop when
+        //    released) instead of snapping to a constant speed, for a smoother, less robotic feel.
+        //Existing orbit-camera mouse handlers (glControl1_MouseDown/Move/Up/Wheel) are left
+        //untouched for non-freecam use; this region only intercepts input when freeCamMode is true.
         private void InitFreeCamTimer()
         {
             if (freeCamTimer != null)
@@ -2599,6 +3290,7 @@ namespace AssetStudioGUI
             }
             freeCamMode = !freeCamMode;
             freeCamKeysDown.Clear();
+            freeCamVelocity = Vector3.Zero;
             freeCamLooking = false;
             lmdown = false;
             rmdown = false;
@@ -2612,7 +3304,7 @@ namespace AssetStudioGUI
                 freeCamPitch = 0;
             }
             StatusStripUpdate(freeCamMode
-                ? "Freecam ON - WASD/QE to fly, hold Right Mouse to look, Shift to sprint, Ctrl+F to exit"
+                ? "Freecam ON - hold Right Mouse to look + fly (WASD/QE), Shift sprint, Ctrl precise, wheel = speed/dolly, Ctrl+F to exit"
                 : "Freecam OFF");
             glControl1.Invalidate();
         }
@@ -2640,14 +3332,41 @@ namespace AssetStudioGUI
             }
             var up = Vector3.Cross(right, forward);
 
-            var speed = freeCamSpeed * (freeCamKeysDown.Contains(Keys.ShiftKey) ? 3f : 1f) * dt;
+            //Unity's flythrough only responds to WASD/QE while RMB is held; without it the
+            //keys are inert (matches Scene view exactly), though held keys still decay smoothly.
+            var flying = freeCamLooking;
+            var wishDir = Vector3.Zero;
+            if (flying)
+            {
+                if (freeCamKeysDown.Contains(Keys.W)) { wishDir += forward; }
+                if (freeCamKeysDown.Contains(Keys.S)) { wishDir -= forward; }
+                if (freeCamKeysDown.Contains(Keys.D)) { wishDir += right; }
+                if (freeCamKeysDown.Contains(Keys.A)) { wishDir -= right; }
+                if (freeCamKeysDown.Contains(Keys.E)) { wishDir += up; }
+                if (freeCamKeysDown.Contains(Keys.Q)) { wishDir -= up; }
+                if (wishDir.LengthSquared > 1e-6f)
+                {
+                    wishDir.Normalize();
+                }
+            }
+
+            var speedMul = freeCamKeysDown.Contains(Keys.ShiftKey) ? 3f
+                : freeCamKeysDown.Contains(Keys.ControlKey) ? 0.3f
+                : 1f;
+            var targetVelocity = wishDir * freeCamSpeed * speedMul;
+
+            //Ease toward the target velocity (accelerate while a key is down) and ease back to
+            //zero when nothing is held, instead of snapping speed on/off.
+            var lerpRate = (targetVelocity.LengthSquared > freeCamVelocity.LengthSquared ? FreeCamAccel : FreeCamDecel) * dt;
+            lerpRate = Math.Max(0f, Math.Min(1f, lerpRate));
+            freeCamVelocity += (targetVelocity - freeCamVelocity) * lerpRate;
+
             var moved = false;
-            if (freeCamKeysDown.Contains(Keys.W)) { freeCamPos += forward * speed; moved = true; }
-            if (freeCamKeysDown.Contains(Keys.S)) { freeCamPos -= forward * speed; moved = true; }
-            if (freeCamKeysDown.Contains(Keys.A)) { freeCamPos -= right * speed; moved = true; }
-            if (freeCamKeysDown.Contains(Keys.D)) { freeCamPos += right * speed; moved = true; }
-            if (freeCamKeysDown.Contains(Keys.E)) { freeCamPos += up * speed; moved = true; }
-            if (freeCamKeysDown.Contains(Keys.Q)) { freeCamPos -= up * speed; moved = true; }
+            if (freeCamVelocity.LengthSquared > 1e-8f)
+            {
+                freeCamPos += freeCamVelocity * dt;
+                moved = true;
+            }
 
             if (moved || freeCamLooking)
             {
@@ -2663,11 +3382,38 @@ namespace AssetStudioGUI
             {
                 freeCamKeysDown.Add(Keys.ShiftKey);
             }
+            if ((Control.ModifierKeys & Keys.Control) == Keys.Control)
+            {
+                freeCamKeysDown.Add(Keys.ControlKey);
+            }
         }
 
         private void FreeCam_KeyUp(Keys keyCode)
         {
             freeCamKeysDown.Remove(keyCode);
+            if ((Control.ModifierKeys & Keys.Shift) != Keys.Shift)
+            {
+                freeCamKeysDown.Remove(Keys.ShiftKey);
+            }
+            if ((Control.ModifierKeys & Keys.Control) != Keys.Control)
+            {
+                freeCamKeysDown.Remove(Keys.ControlKey);
+            }
+        }
+
+        private void FreeCamFrameOrigin()
+        {
+            var forward = new Vector3(
+                (float)(Math.Cos(freeCamPitch) * Math.Cos(freeCamYaw)),
+                (float)Math.Sin(freeCamPitch),
+                (float)(Math.Cos(freeCamPitch) * Math.Sin(freeCamYaw)));
+            forward.Normalize();
+            const float FrameDistance = 3f;
+            freeCamPos = -forward * FrameDistance; // back off along the current look dir, origin stays in view
+            freeCamVelocity = Vector3.Zero;
+            viewMatrixData = Matrix4.LookAt(freeCamPos, freeCamPos + forward, Vector3.UnitY);
+            StatusStripUpdate("Freecam: framed origin");
+            glControl1.Invalidate();
         }
 
         private void FreeCam_MouseDown(MouseEventArgs e)
@@ -2696,8 +3442,415 @@ namespace AssetStudioGUI
 
         private void FreeCam_MouseWheel(MouseEventArgs e)
         {
-            freeCamSpeed = Math.Max(0.1f, freeCamSpeed * (e.Delta > 0 ? 1.15f : 1f / 1.15f));
-            StatusStripUpdate($"Freecam speed: {freeCamSpeed:0.00}");
+            if (freeCamLooking)
+            {
+                //Flying: wheel adjusts fly speed, same as Unity's Scene view.
+                freeCamSpeed = Math.Max(0.1f, freeCamSpeed * (e.Delta > 0 ? 1.15f : 1f / 1.15f));
+                StatusStripUpdate($"Freecam speed: {freeCamSpeed:0.00}");
+            }
+            else
+            {
+                //Not flying: wheel dollies the camera along its look direction, like scrolling
+                //in Unity's Scene view when you're not holding RMB.
+                var forward = new Vector3(
+                    (float)(Math.Cos(freeCamPitch) * Math.Cos(freeCamYaw)),
+                    (float)Math.Sin(freeCamPitch),
+                    (float)(Math.Cos(freeCamPitch) * Math.Sin(freeCamYaw)));
+                forward.Normalize();
+                var dolly = (e.Delta / 120f) * freeCamSpeed * 0.5f;
+                freeCamPos += forward * dolly;
+                viewMatrixData = Matrix4.LookAt(freeCamPos, freeCamPos + forward, Vector3.UnitY);
+                glControl1.Invalidate();
+            }
+        }
+        #endregion
+
+        #region AnimationPreview (AssetStudio 2 - Feature 3)
+        // Builds the playback controls overlay purely in code (mirrors InitMeshPartsPanel) and
+        // docks it at the bottom of previewPanel, on top of glControl1. Hidden until an
+        // AnimationClip/Animator is actually previewed.
+        private void InitAnimationControlsPanel()
+        {
+            animationControlsPanel = new Panel
+            {
+                BackColor = Color.FromArgb(235, 32, 32, 32),
+                Height = 66,
+                Visible = false
+            };
+
+            animationPlayPauseButton = new Button
+            {
+                Text = "\u25B6", // play glyph; swapped to pause glyph while playing
+                Width = 36,
+                Height = 28,
+                Location = new Point(6, 6)
+            };
+            animationPlayPauseButton.Click += (s, e) => ToggleAnimationPlayback();
+
+            animationTimeLabel = new Label
+            {
+                Text = "0.00 / 0.00s",
+                ForeColor = Color.White,
+                AutoSize = false,
+                Width = 110,
+                Height = 20,
+                Location = new Point(48, 12),
+                TextAlign = ContentAlignment.MiddleLeft
+            };
+
+            animationLoopCheckBox = new CheckBox
+            {
+                Text = "Loop",
+                ForeColor = Color.White,
+                AutoSize = true,
+                Checked = true,
+                Location = new Point(162, 10)
+            };
+            animationLoopCheckBox.CheckedChanged += (s, e) => animationPreviewLoop = animationLoopCheckBox.Checked;
+
+            animationSpeedCombo = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Width = 70,
+                Location = new Point(226, 8)
+            };
+            animationSpeedCombo.Items.AddRange(new object[] { "0.25x", "0.5x", "1x", "1.5x", "2x", "4x" });
+            animationSpeedCombo.SelectedIndex = 2;
+            animationSpeedCombo.SelectedIndexChanged += (s, e) =>
+            {
+                var text = (string)animationSpeedCombo.SelectedItem;
+                if (float.TryParse(text.TrimEnd('x'), NumberStyles.Float, CultureInfo.InvariantCulture, out var v))
+                {
+                    animationPreviewSpeed = v;
+                }
+            };
+
+            animationClipSelector = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Width = 160,
+                Location = new Point(304, 8),
+                Visible = false // only shown when an Animator with multiple clips is selected
+            };
+            animationClipSelector.SelectedIndexChanged += (s, e) =>
+            {
+                if (suppressAnimationScrubEvent) return;
+                if (animationClipSelector.SelectedIndex < 0 || currentAnimationClipCandidates == null) return;
+                if (animationClipSelector.SelectedIndex >= currentAnimationClipCandidates.Count) return;
+                LoadAnimationClipIntoRig(currentAnimationClipCandidates[animationClipSelector.SelectedIndex]);
+            };
+
+            animationScrubBar = new TrackBar
+            {
+                Minimum = 0,
+                Maximum = 1000,
+                TickStyle = TickStyle.None,
+                Location = new Point(6, 36),
+                Height = 28
+            };
+            animationScrubBar.Scroll += (s, e) =>
+            {
+                if (currentDecodedClip == null) return;
+                animationPreviewPlaying = false;
+                UpdatePlayPauseGlyph();
+                animationPreviewTime = (animationScrubBar.Value / 1000f) * currentDecodedClip.Length;
+                ApplyAnimationFrame();
+            };
+
+            animationControlsPanel.Controls.Add(animationPlayPauseButton);
+            animationControlsPanel.Controls.Add(animationTimeLabel);
+            animationControlsPanel.Controls.Add(animationLoopCheckBox);
+            animationControlsPanel.Controls.Add(animationSpeedCombo);
+            animationControlsPanel.Controls.Add(animationClipSelector);
+            animationControlsPanel.Controls.Add(animationScrubBar);
+
+            previewPanel.Controls.Add(animationControlsPanel);
+            animationControlsPanel.BringToFront();
+            PositionAnimationControlsPanel();
+
+            animationPreviewTimer = new System.Windows.Forms.Timer { Interval = 16 }; // ~60Hz
+            animationPreviewTimer.Tick += (s, e) => AnimationPreviewTick();
+        }
+
+        // Docks the panel to the full width, bottom of the preview area.
+        private void PositionAnimationControlsPanel()
+        {
+            if (animationControlsPanel == null || previewPanel == null) return;
+            animationControlsPanel.Width = previewPanel.ClientSize.Width;
+            animationControlsPanel.Location = new Point(0, Math.Max(0, previewPanel.ClientSize.Height - animationControlsPanel.Height));
+            animationScrubBar.Width = Math.Max(50, animationControlsPanel.Width - 12);
+        }
+
+        private void UpdatePlayPauseGlyph()
+        {
+            if (animationPlayPauseButton == null) return;
+            animationPlayPauseButton.Text = animationPreviewPlaying ? "\u23F8" : "\u25B6";
+        }
+
+        private void ToggleAnimationPlayback()
+        {
+            if (currentDecodedClip == null) return;
+            animationPreviewPlaying = !animationPreviewPlaying;
+            if (animationPreviewPlaying && animationPreviewTime >= currentDecodedClip.Length - 1e-4f)
+            {
+                animationPreviewTime = 0f; // restart from the beginning if resuming at the end
+            }
+            animationPreviewLastTick = DateTime.Now;
+            UpdatePlayPauseGlyph();
+        }
+
+        // Stops playback and hides the controls; called whenever the user selects something
+        // that isn't an AnimationClip/Animator, and from ResetForm.
+        private void StopAnimationPreview()
+        {
+            animationPreviewPlaying = false;
+            if (animationPreviewTimer != null && animationPreviewTimer.Enabled)
+            {
+                animationPreviewTimer.Stop();
+            }
+            if (animationControlsPanel != null)
+            {
+                animationControlsPanel.Visible = false;
+            }
+            currentAnimationRig = null;
+            currentDecodedClip = null;
+            currentAnimationClipCandidates = null;
+            animationBoundsFitted = false;
+        }
+
+        // Entry point for selecting an Animator directly: builds the rig once and offers every
+        // clip its controller references in a dropdown, defaulting to the first one (or to
+        // `preselectedClip` if the Animator was reached by selecting one of its clips).
+        private void PreviewAnimator(Animator animator, AnimationClip preselectedClip)
+        {
+            try
+            {
+                var rig = AnimationPreview.BuildRig(animator);
+                if (rig == null || rig.Parts.Count == 0)
+                {
+                    StatusStripUpdate("No skinned/static meshes found under this Animator's rig.");
+                    return;
+                }
+
+                var clips = CollectClipsForAnimator(animator);
+                if (clips.Count == 0)
+                {
+                    StatusStripUpdate("This Animator's controller has no AnimationClips to preview.");
+                    return;
+                }
+
+                currentAnimationRig = rig;
+                currentAnimationClipCandidates = clips;
+
+                suppressAnimationScrubEvent = true;
+                animationClipSelector.Items.Clear();
+                foreach (var c in clips) animationClipSelector.Items.Add(c.m_Name);
+                animationClipSelector.Visible = clips.Count > 1;
+                var startIndex = preselectedClip != null ? clips.IndexOf(preselectedClip) : 0;
+                animationClipSelector.SelectedIndex = Math.Max(0, startIndex);
+                suppressAnimationScrubEvent = false;
+
+                LoadAnimationClipIntoRig(clips[Math.Max(0, startIndex)]);
+            }
+            catch (Exception ex)
+            {
+                StatusStripUpdate("Failed to preview Animator: " + ex.Message);
+            }
+        }
+
+        // Entry point for selecting an AnimationClip directly: finds the best rig to play it on
+        // (see AnimationPreview.FindOwningAnimator), then defers to PreviewAnimator so the same
+        // "pick a clip" dropdown works whichever way the user navigated in.
+        private void PreviewAnimationClip(AnimationClip clip)
+        {
+            try
+            {
+                var animator = AnimationPreview.FindOwningAnimator(clip, assetsManager);
+                if (animator == null)
+                {
+                    StatusStripUpdate("No rig (Animator) found for this AnimationClip - nothing to preview.");
+                    return;
+                }
+                PreviewAnimator(animator, clip);
+            }
+            catch (Exception ex)
+            {
+                StatusStripUpdate("Failed to preview AnimationClip: " + ex.Message);
+            }
+        }
+
+        private List<AnimationClip> CollectClipsForAnimator(Animator animator)
+        {
+            var clips = new List<AnimationClip>();
+            if (!animator.m_Controller.TryGet(out var rc)) return clips;
+
+            void AddFrom(RuntimeAnimatorController controller)
+            {
+                switch (controller)
+                {
+                    case AnimatorController ac:
+                        foreach (var pptr in ac.m_AnimationClips)
+                        {
+                            if (pptr.TryGet(out var c) && !clips.Contains(c)) clips.Add(c);
+                        }
+                        break;
+                    case AnimatorOverrideController aoc:
+                        foreach (var clipOverride in aoc.m_Clips)
+                        {
+                            AnimationClip c = null;
+                            if (clipOverride.m_OverrideClip.TryGet(out var oc)) c = oc;
+                            else if (clipOverride.m_OriginalClip.TryGet(out var origC)) c = origC;
+                            if (c != null && !clips.Contains(c)) clips.Add(c);
+                        }
+                        if (aoc.m_Controller.TryGet(out var baseRc))
+                        {
+                            AddFrom(baseRc);
+                        }
+                        break;
+                }
+            }
+            AddFrom(rc);
+            return clips;
+        }
+
+        // (Re)decodes `clip` against the already-built currentAnimationRig, resets playback to
+        // frame 0, shows the controls panel, and renders the bind/first-frame pose immediately.
+        private void LoadAnimationClipIntoRig(AnimationClip clip)
+        {
+            if (currentAnimationRig == null) return;
+
+            var decoded = AnimationPreview.DecodeClip(clip, currentAnimationRig);
+            currentDecodedClip = decoded;
+            animationPreviewTime = 0f;
+            animationPreviewPlaying = true;
+            animationPreviewLastTick = DateTime.Now;
+            animationBoundsFitted = false;
+            UpdatePlayPauseGlyph();
+
+            animationControlsPanel.Visible = true;
+            PositionAnimationControlsPanel();
+            animationControlsPanel.BringToFront();
+            if (meshPartsPanel != null) meshPartsPanel.Visible = false; // parts overlay doesn't apply here
+
+            viewMatrixData = Matrix4.CreateRotationY(-(float)Math.PI / 4) * Matrix4.CreateRotationX(-(float)Math.PI / 6);
+
+            animationPreviewTimer.Start();
+            ApplyAnimationFrame();
+
+            var boneCount = currentAnimationRig.BonesByPath.Count;
+            var trackCount = decoded.TracksByPath.Count;
+            StatusStripUpdate($"Previewing animation '{decoded.Name}' ({trackCount}/{boneCount} bones animated, {decoded.Length:0.00}s) \n"
+                              + "'Space'=Play/Pause | 'Mouse Left'=Rotate | 'Mouse Right'=Move | 'Mouse Wheel'=Zoom | 'Ctrl F'=Freecam");
+        }
+
+        private void AnimationPreviewTick()
+        {
+            if (currentDecodedClip == null || currentAnimationRig == null) return;
+            if (!animationPreviewPlaying)
+            {
+                return;
+            }
+
+            var now = DateTime.Now;
+            var dt = (float)(now - animationPreviewLastTick).TotalSeconds;
+            animationPreviewLastTick = now;
+            if (dt <= 0 || dt > 0.25f) return;
+
+            animationPreviewTime += dt * animationPreviewSpeed;
+            if (animationPreviewTime >= currentDecodedClip.Length)
+            {
+                if (animationPreviewLoop)
+                {
+                    animationPreviewTime %= Math.Max(currentDecodedClip.Length, 1e-4f);
+                }
+                else
+                {
+                    animationPreviewTime = currentDecodedClip.Length;
+                    animationPreviewPlaying = false;
+                    UpdatePlayPauseGlyph();
+                }
+            }
+
+            ApplyAnimationFrame();
+        }
+
+        // Evaluates the pose at animationPreviewTime, re-skins every mesh part in the rig, and
+        // pushes the result into the existing GL mesh-preview buffers/VAO so it draws through
+        // the same code path as the static mesh preview.
+        private void ApplyAnimationFrame()
+        {
+            if (currentAnimationRig == null || currentDecodedClip == null) return;
+
+            AnimationPreview.EvaluatePose(currentAnimationRig, currentDecodedClip, animationPreviewTime);
+            var skinned = AnimationPreview.SkinRig(currentAnimationRig);
+            if (skinned.Vertices.Length == 0)
+            {
+                return;
+            }
+
+            vertexData = skinned.Vertices;
+            normalData = skinned.Normals;
+            normal2Data = skinned.Normals;
+            colorData = skinned.Colors;
+            indiceData = skinned.Indices;
+            texCoordData = null;
+
+            // One "submesh" spanning the whole combined index buffer - animation preview doesn't
+            // resolve per-submesh textures (rig can span many meshes/materials), so draw it as a
+            // single untextured/shaded batch through the existing per-submesh draw loop.
+            submeshTextureIds.Clear();
+            submeshIndexOffsets.Clear();
+            submeshIndexCounts.Clear();
+            meshPreviewHasAnyTexture = false;
+            if (indiceData.Length > 0)
+            {
+                submeshTextureIds.Add(-1);
+                submeshIndexOffsets.Add(0);
+                submeshIndexCounts.Add(indiceData.Length);
+            }
+
+            // Fit the camera to the *bind pose* bounds once per clip load rather than every
+            // frame, so the model doesn't rescale/re-center (and appear to "shake") as the
+            // animated bounds change tick to tick. Recomputed lazily the first time this clip's
+            // buffers are non-empty.
+            if (!animationBoundsFitted)
+            {
+                FitAnimationCamera(skinned.Vertices);
+                animationBoundsFitted = true;
+            }
+
+            if (!glControl1.Visible)
+            {
+                glControl1.Visible = true;
+            }
+            CreateVAO();
+            glControl1.Invalidate();
+
+            if (!suppressAnimationScrubEvent)
+            {
+                suppressAnimationScrubEvent = true;
+                var frac = currentDecodedClip.Length > 1e-4f ? animationPreviewTime / currentDecodedClip.Length : 0f;
+                animationScrubBar.Value = Math.Max(0, Math.Min(1000, (int)(frac * 1000)));
+                suppressAnimationScrubEvent = false;
+            }
+            animationTimeLabel.Text = $"{animationPreviewTime:0.00} / {currentDecodedClip.Length:0.00}s";
+        }
+
+        private void FitAnimationCamera(Vector3[] vertices)
+        {
+            if (vertices == null || vertices.Length == 0) return;
+            float[] min = { vertices[0].X, vertices[0].Y, vertices[0].Z };
+            float[] max = { vertices[0].X, vertices[0].Y, vertices[0].Z };
+            foreach (var v in vertices)
+            {
+                min[0] = Math.Min(min[0], v.X); max[0] = Math.Max(max[0], v.X);
+                min[1] = Math.Min(min[1], v.Y); max[1] = Math.Max(max[1], v.Y);
+                min[2] = Math.Min(min[2], v.Z); max[2] = Math.Max(max[2], v.Z);
+            }
+            var dist = new Vector3(max[0] - min[0], max[1] - min[1], max[2] - min[2]);
+            var offset = new Vector3((max[0] + min[0]) / 2, (max[1] + min[1]) / 2, (max[2] + min[2]) / 2);
+            var d = Math.Max(1e-5f, dist.Length);
+            modelMatrixData = Matrix4.CreateTranslation(-offset) * Matrix4.CreateScale(2f / d);
         }
         #endregion
         #endregion

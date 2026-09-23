@@ -681,8 +681,61 @@ namespace AssetStudioGUI
             }
         }
 
+        // AssetStudio 2: tries once per session to auto-locate the game's Managed assembly
+        // folder (Mono builds only - IL2CPP has no per-script DLLs to read) from the paths of
+        // the files already loaded, so MonoBehaviour/MonoScript preview can auto-map fields
+        // without ever popping the "select assembly folder" dialog. Safe to call repeatedly;
+        // only does real work the first time.
+        private static bool assemblyAutoLoadAttempted;
+
+        public static void EnsureAssembliesAutoLoaded()
+        {
+            if (assemblyLoader.Loaded || assemblyAutoLoadAttempted) return;
+            assemblyAutoLoadAttempted = true;
+
+            var candidates = new List<string>();
+            foreach (var assetsFile in assetsManager.assetsFileList)
+            {
+                var path = !string.IsNullOrEmpty(assetsFile.originalPath) ? assetsFile.originalPath : assetsFile.fullName;
+                if (string.IsNullOrEmpty(path)) continue;
+
+                var dir = Path.GetDirectoryName(path);
+                for (int i = 0; i < 3 && !string.IsNullOrEmpty(dir); i++)
+                {
+                    candidates.Add(Path.Combine(dir, "Managed"));
+                    dir = Path.GetDirectoryName(dir);
+                }
+            }
+
+            foreach (var candidate in candidates.Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    if (Directory.Exists(candidate) && Directory.GetFiles(candidate, "*.dll").Length > 0)
+                    {
+                        assemblyLoader.Load(candidate);
+                        if (assemblyLoader.Loaded)
+                        {
+                            StatusStripUpdate($"Auto-mapped scripts from: {candidate}");
+                            return;
+                        }
+                    }
+                }
+                catch
+                {
+                    // inaccessible folder, etc. - just try the next candidate
+                }
+            }
+        }
+
+        public static void ResetAssemblyAutoLoad()
+        {
+            assemblyAutoLoadAttempted = false;
+        }
+
         public static TypeTree MonoBehaviourToTypeTree(MonoBehaviour m_MonoBehaviour)
         {
+            EnsureAssembliesAutoLoaded();
             if (!assemblyLoader.Loaded)
             {
                 var openFolderDialog = new OpenFolderDialog();

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Runtime.CompilerServices;
 using Texture2DDecoder;
 
@@ -563,11 +563,6 @@ namespace AssetStudio
 
         private bool DecodeETC1(byte[] image_data, byte[] buff)
         {
-            // Same rationale as DecodeDXT1/DecodeDXT5 above: route through the managed,
-            // spec-faithful decoder (ported from the AOSP reference) in "Better" mode instead
-            // of always trusting the bundled native Texture2DDecoderNative implementation.
-            if (Mode == DecoderMode.Better)
-                return BetterBCnDecoder.DecodeETC1(image_data, m_Width, m_Height, buff);
             return TextureDecoder.DecodeETC1(image_data, m_Width, m_Height, buff);
         }
 

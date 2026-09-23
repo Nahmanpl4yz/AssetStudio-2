@@ -378,11 +378,11 @@ namespace AssetStudioGUI
             return true;
         }
 
-        public static void ExportGameObject(GameObject gameObject, string exportPath, List<AssetItem> animationList = null)
+        public static void ExportGameObject(GameObject gameObject, string exportPath, List<AssetItem> animationList = null, HashSet<long> excludedGameObjectPathIDs = null)
         {
             var convert = animationList != null
-                ? new ModelConverter(gameObject, Properties.Settings.Default.convertType, animationList.Select(x => (AnimationClip)x.Asset).ToArray())
-                : new ModelConverter(gameObject, Properties.Settings.Default.convertType);
+                ? new ModelConverter(gameObject, Properties.Settings.Default.convertType, animationList.Select(x => (AnimationClip)x.Asset).ToArray(), excludedGameObjectPathIDs)
+                : new ModelConverter(gameObject, Properties.Settings.Default.convertType, null, excludedGameObjectPathIDs);
             exportPath = exportPath + FixFileName(gameObject.m_Name) + ".fbx";
             ExportFbx(convert, exportPath);
         }

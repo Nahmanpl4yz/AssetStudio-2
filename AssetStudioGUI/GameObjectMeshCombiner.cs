@@ -29,6 +29,11 @@ namespace AssetStudioGUI
         {
             public Mesh Mesh;
             public Matrix4 LocalToRoot;
+            // AssetStudio 2: identity of the GameObject that owns this part, so the GUI can list
+            // parts individually (toggle visibility in preview) and so export can be filtered to
+            // match - this is the same PathID ModelConverter sees while walking the hierarchy.
+            public long GameObjectPathID;
+            public string Name;
         }
 
         public class CombinedMesh
@@ -129,7 +134,13 @@ namespace AssetStudioGUI
 
                     if (mesh != null && mesh.m_VertexCount > 0)
                     {
-                        parts.Add(new CombinedPart { Mesh = mesh, LocalToRoot = localToRoot });
+                        parts.Add(new CombinedPart
+                        {
+                            Mesh = mesh,
+                            LocalToRoot = localToRoot,
+                            GameObjectPathID = go.m_PathID,
+                            Name = go.m_Name
+                        });
                     }
                 }
             }
@@ -158,8 +169,15 @@ namespace AssetStudioGUI
         }
 
         // Builds one combined vertex/index buffer (root-local space) out of every part found.
-        public static CombinedMesh Combine(List<CombinedPart> parts)
+        // Parts whose owning GameObject PathID is in excludedGameObjectPathIDs are skipped, so
+        // the preview can hide individual pieces (wheels, interior, etc.) on demand.
+        public static CombinedMesh Combine(List<CombinedPart> parts, HashSet<long> excludedGameObjectPathIDs = null)
         {
+            if (excludedGameObjectPathIDs != null && excludedGameObjectPathIDs.Count > 0)
+            {
+                parts = parts.Where(p => !excludedGameObjectPathIDs.Contains(p.GameObjectPathID)).ToList();
+            }
+
             var result = new CombinedMesh();
             var vertices = new List<Vector3>();
             var normals = new List<Vector3>();

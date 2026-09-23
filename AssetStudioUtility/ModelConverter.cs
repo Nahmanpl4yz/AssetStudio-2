@@ -16,6 +16,9 @@ namespace AssetStudio
 
         private ImageFormat imageFormat;
         private Avatar avatar;
+        // AssetStudio 2: GameObject PathIDs to leave out of the export entirely (mirrors the
+        // "hidden" parts toggled off in the combined mesh preview), so export matches preview.
+        private HashSet<long> excludedGameObjectPathIDs;
         private HashSet<AnimationClip> animationClipHashSet = new HashSet<AnimationClip>();
         private Dictionary<AnimationClip, string> boundAnimationPathDic = new Dictionary<AnimationClip, string>();
         private Dictionary<uint, string> bonePathHash = new Dictionary<uint, string>();
@@ -23,9 +26,10 @@ namespace AssetStudio
         private Dictionary<Transform, ImportedFrame> transformDictionary = new Dictionary<Transform, ImportedFrame>();
         Dictionary<uint, string> morphChannelNames = new Dictionary<uint, string>();
 
-        public ModelConverter(GameObject m_GameObject, ImageFormat imageFormat, AnimationClip[] animationList = null)
+        public ModelConverter(GameObject m_GameObject, ImageFormat imageFormat, AnimationClip[] animationList = null, HashSet<long> excludedGameObjectPathIDs = null)
         {
             this.imageFormat = imageFormat;
+            this.excludedGameObjectPathIDs = excludedGameObjectPathIDs;
             if (m_GameObject.m_Animator != null)
             {
                 InitWithAnimator(m_GameObject.m_Animator);
@@ -148,12 +152,17 @@ namespace AssetStudio
         {
             m_Transform.m_GameObject.TryGet(out var m_GameObject);
 
-            if (m_GameObject.m_MeshRenderer != null)
+            // AssetStudio 2: a part hidden in the combined preview is skipped here too, so the
+            // exported model matches exactly what's visible in the preview. Children are still
+            // walked normally in case a hidden node's child renderer wasn't excluded.
+            var excluded = excludedGameObjectPathIDs != null && excludedGameObjectPathIDs.Contains(m_GameObject.m_PathID);
+
+            if (!excluded && m_GameObject.m_MeshRenderer != null)
             {
                 ConvertMeshRenderer(m_GameObject.m_MeshRenderer);
             }
 
-            if (m_GameObject.m_SkinnedMeshRenderer != null)
+            if (!excluded && m_GameObject.m_SkinnedMeshRenderer != null)
             {
                 ConvertMeshRenderer(m_GameObject.m_SkinnedMeshRenderer);
             }
