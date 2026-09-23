@@ -510,6 +510,11 @@ namespace AssetStudioGUI
             var m_Clip = clip.m_MuscleClip.m_Clip;
             var m_ClipBindingConstant = clip.m_ClipBindingConstant ?? m_Clip.ConvertValueArrayToGenericBinding();
 
+            // A ref parameter (maxTime) can't be captured by the local function below, so we
+            // track the running max in an ordinary local and write it back to the ref parameter
+            // once, after every call site below has finished updating it.
+            float maxTimeLocal = maxTime;
+
             Track TrackFor(string path)
             {
                 if (path == null) return null;
@@ -566,7 +571,7 @@ namespace AssetStudioGUI
                         curveIndex++;
                         break;
                 }
-                maxTime = Math.Max(maxTime, time);
+                maxTimeLocal = Math.Max(maxTimeLocal, time);
             }
 
             var streamedFrames = m_Clip.m_StreamedClip.ReadData();
@@ -608,6 +613,9 @@ namespace AssetStudioGUI
                     time2 = clip.m_MuscleClip.m_StopTime;
                 }
             }
+
+            // Write the accumulated max time back to the caller's ref parameter.
+            maxTime = maxTimeLocal;
         }
 
         // ------------------------------------------------------------------
