@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Runtime.InteropServices;
 using AssetStudio.PInvoke;
 
@@ -210,22 +210,14 @@ namespace Texture2DDecoder
             }
         }
 
-        public static byte[] UnpackCrunch(byte[] data) => UnpackCrunch(data, data.Length);
-
-        // dataLength must be the number of VALID compressed bytes in data, not data.Length -
-        // data commonly comes from an ArrayPool<byte> rental (see Texture2DConverter.DecodeTexture2D),
-        // and ArrayPool.Rent is only guaranteed to return an array at least as big as requested, so
-        // data.Length can run past the real payload into stale bytes left over from a previous rental.
-        // Feeding those extra bytes to the native crunch decompressor desyncs it partway through and
-        // produces corrupted/noisy output, regardless of which BCn decoder mode is used afterwards.
-        public static byte[] UnpackCrunch(byte[] data, int dataLength)
+        public static byte[] UnpackCrunch(byte[] data)
         {
             void* pBuffer;
             uint bufferSize;
 
             fixed (byte* pData = data)
             {
-                UnpackCrunch(pData, (uint)dataLength, out pBuffer, out bufferSize);
+                UnpackCrunch(pData, (uint)data.Length, out pBuffer, out bufferSize);
             }
 
             if (pBuffer == null)
@@ -242,18 +234,14 @@ namespace Texture2DDecoder
             return result;
         }
 
-        public static byte[] UnpackUnityCrunch(byte[] data) => UnpackUnityCrunch(data, data.Length);
-
-        // See the note on UnpackCrunch(byte[], int) above - dataLength must be the real payload size,
-        // not data.Length, when data is a pooled/oversized array.
-        public static byte[] UnpackUnityCrunch(byte[] data, int dataLength)
+        public static byte[] UnpackUnityCrunch(byte[] data)
         {
             void* pBuffer;
             uint bufferSize;
 
             fixed (byte* pData = data)
             {
-                UnpackUnityCrunch(pData, (uint)dataLength, out pBuffer, out bufferSize);
+                UnpackUnityCrunch(pData, (uint)data.Length, out pBuffer, out bufferSize);
             }
 
             if (pBuffer == null)
