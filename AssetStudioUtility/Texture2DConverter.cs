@@ -563,6 +563,11 @@ namespace AssetStudio
 
         private bool DecodeETC1(byte[] image_data, byte[] buff)
         {
+            // Same rationale as DecodeDXT1/DecodeDXT5 above: route through the managed,
+            // spec-faithful decoder (ported from the AOSP reference) in "Better" mode instead
+            // of always trusting the bundled native Texture2DDecoderNative implementation.
+            if (Mode == DecoderMode.Better)
+                return BetterBCnDecoder.DecodeETC1(image_data, m_Width, m_Height, buff);
             return TextureDecoder.DecodeETC1(image_data, m_Width, m_Height, buff);
         }
 
@@ -711,22 +716,15 @@ namespace AssetStudio
 
         private bool UnpackCrunch(byte[] image_data, out byte[] result)
         {
-            // AssetStudio 2 fix: image_data here is the buff rented from BigArrayPool in
-            // DecodeTexture2D, which ArrayPool only guarantees to be *at least* reader.Size bytes
-            // (it's commonly rounded up to the pool's bucket size, and reused across calls). Passing
-            // image_data.Length to the native unpacker fed it trailing stale/garbage bytes past the
-            // real compressed payload, which corrupted the crunch bitstream partway through and, in
-            // turn, every texture decoded from it - in both "Better" and "Original" decoder modes,
-            // since this unpack happens before that choice is made. Pass the real payload size instead.
             if (version[0] > 2017 || (version[0] == 2017 && version[1] >= 3) //2017.3 and up
                 || m_TextureFormat == TextureFormat.ETC_RGB4Crunched
                 || m_TextureFormat == TextureFormat.ETC2_RGBA8Crunched)
             {
-                result = TextureDecoder.UnpackUnityCrunch(image_data, reader.Size);
+                result = TextureDecoder.UnpackUnityCrunch(image_data);
             }
             else
             {
-                result = TextureDecoder.UnpackCrunch(image_data, reader.Size);
+                result = TextureDecoder.UnpackCrunch(image_data);
             }
             if (result != null)
             {
