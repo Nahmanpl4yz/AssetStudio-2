@@ -16,7 +16,7 @@ Version 0.17 introduces new mesh reconstruction and audio playback features desi
 
 ### 🆕 New Feature: Game Object Mesh Reconstruction
 
-AssetStudio 2.0.17 can now attempt to **reconstruct the mesh layout used by a GameObject in the original game**.
+AssetStudio 2 0.17 can now attempt to **reconstruct the mesh layout used by a GameObject in the original game**.
 
 Instead of exporting individual meshes separately, AssetStudio 2 analyzes related meshes and attempts to combine them into the structure of the original GameObject.
 
@@ -47,7 +47,7 @@ It then attempts to:
 
 This is particularly useful for complex objects such as **cars, trains, characters, buildings, weapons, and other multi-part GameObjects**.
 
-> **Example:** Instead of receiving a car body, four wheels, interior, and dashboard as completely separate exports, AssetStudio 2.0.17 can attempt to reconstruct them into the complete car as it was assembled in the Unity game.
+> **Example:** Instead of receiving a car body, four wheels, interior, and dashboard as completely separate exports, AssetStudio 2 0.17 can attempt to reconstruct them into the complete car as it was assembled in the Unity game.
 
 Because Unity games can organize assets in many different ways, reconstruction depends on the information available in the game's serialized data. Some GameObjects may therefore require manual handling.
 
@@ -55,7 +55,7 @@ Because Unity games can organize assets in many different ways, reconstruction d
 
 ### 🆕 New Feature: Audio Playback Speed
 
-AssetStudio 2.0.17 adds **Audio Playback Speed** controls.
+AssetStudio 2 0.17 adds **Audio Playback Speed** controls.
 
 When previewing supported `AudioClip` assets, you can change the playback speed to make inspecting audio easier.
 
@@ -284,7 +284,7 @@ Hold **Ctrl** to select multiple compatible assets when necessary.
 
 # 🧩 GameObject Mesh Reconstruction
 
-AssetStudio 2.0.17 introduces automatic reconstruction of complex GameObjects.
+AssetStudio 2 0.17 introduces automatic reconstruction of complex GameObjects.
 
 When possible, AssetStudio 2 analyzes the relationships between meshes, GameObjects, transforms, containers, and other serialized data.
 
@@ -335,7 +335,7 @@ The exact results depend on how the game stores its GameObjects and assets.
 
 # 🔊 Audio Playback
 
-AssetStudio 2.0.17 adds playback-speed controls for supported `AudioClip` previews.
+AssetStudio 2 0.17 adds playback-speed controls for supported `AudioClip` previews.
 
 This allows you to inspect audio at different speeds without changing the original asset.
 
