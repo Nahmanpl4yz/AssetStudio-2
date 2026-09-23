@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: microsoft/setup-msbuild@v2
 
-      - name: Download and install FBX SDK
+      - name: Download, install and wire up FBX SDK
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -36,26 +36,59 @@ jobs:
           }
           cd ..
 
-          # The installer writes to a versioned path under Program Files but does not
-          # make that path visible to this (already-running) runner process, so we
-          # have to locate it and export it ourselves for later steps.
-          $fbxRoot = Get-ChildItem "C:\Program Files\Autodesk\FBX\FBX SDK" -Directory |
-            Sort-Object Name -Descending | Select-Object -First 1 -ExpandProperty FullName
+          # AssetStudioFBXNative.vcxproj hardcodes an absolute FBX SDK path (this is how
+          # upstream AssetStudio ships it - see its README: "modify the project file, change
+          # include directory and library directory to point to the FBX SDK directory").
+          # Rather than assume the checked-in version/layout matches what the installer above
+          # actually produced, find fbxsdk.h and libfbxsdk-mt.lib on disk and rewrite the
+          # project file's paths to match reality.
+          $header = Get-ChildItem "C:\Program Files\Autodesk\FBX\FBX SDK" -Recurse -Filter "fbxsdk.h" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $header) {
+            Get-ChildItem "C:\Program Files\Autodesk\FBX" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 100 | Format-Table FullName
+            throw "fbxsdk.h not found anywhere under the FBX install root - see listing above"
+          }
+          $includeDir = $header.DirectoryName
+          Write-Host "Found fbxsdk.h include dir: $includeDir"
 
-          if (-not $fbxRoot -or -not (Test-Path (Join-Path $fbxRoot "include\fbxsdk.h"))) {
-            Write-Host "FBX SDK install root: $fbxRoot"
-            Get-ChildItem "C:\Program Files\Autodesk\FBX" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 50 | Format-Table FullName
-            throw "fbxsdk.h not found after install - see directory listing above"
+          $libs = Get-ChildItem "C:\Program Files\Autodesk\FBX\FBX SDK" -Recurse -Filter "libfbxsdk-mt.lib" -ErrorAction SilentlyContinue
+          if (-not $libs) {
+            throw "libfbxsdk-mt.lib not found anywhere under the FBX install root"
+          }
+          foreach ($lib in $libs) {
+            Write-Host "Found lib dir: $($lib.DirectoryName)"
           }
 
-          Write-Host "Found FBX SDK at $fbxRoot"
-          "FBXSDK_ROOT=$fbxRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          $vcxproj = "AssetStudioFBXNative\AssetStudioFBXNative.vcxproj"
+          $content = Get-Content $vcxproj -Raw
+
+          # Replace the hardcoded include dir (every occurrence, regardless of the version
+          # baked into the checked-in file) with the real one we just found.
+          $content = $content.Replace('C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.10\include', $includeDir)
+
+          # Replace each of the four lib dirs (x86/x64 x debug/release) with the matching
+          # real directory found on disk, matched by trailing path segment.
+          foreach ($config in @(
+            @{ Old = 'C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.10\lib\x86\debug';   Suffix = 'x86\debug'   },
+            @{ Old = 'C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.10\lib\x86\release'; Suffix = 'x86\release' },
+            @{ Old = 'C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.10\lib\x64\debug';   Suffix = 'x64\debug'   },
+            @{ Old = 'C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.10\lib\x64\release'; Suffix = 'x64\release' }
+          )) {
+            $match = $libs | Where-Object { $_.DirectoryName -like "*$($config.Suffix)" } | Select-Object -First 1
+            if (-not $match) {
+              throw "Could not find an installed lib directory matching '*$($config.Suffix)' - installed layout may differ from what this script expects"
+            }
+            $content = $content.Replace($config.Old, $match.DirectoryName)
+            Write-Host "Mapped $($config.Old) -> $($match.DirectoryName)"
+          }
+
+          Set-Content -Path $vcxproj -Value $content -NoNewline
+          Write-Host "Patched $vcxproj to use the installed FBX SDK paths."
 
       - name: Nuget Restore
         run: nuget restore
 
       - name: Build .Net472
-        run: msbuild /p:Configuration=Release /p:TargetFramework=net472 /p:FBXSDK_ROOT="$env:FBXSDK_ROOT" /verbosity:minimal
+        run: msbuild /p:Configuration=Release /p:TargetFramework=net472 /verbosity:minimal
 
       - name: Build .Net5
         run: msbuild /t:AssetStudioGUI:publish /p:Configuration=Release /p:TargetFramework=net5.0-windows /p:SelfContained=false /verbosity:minimal
