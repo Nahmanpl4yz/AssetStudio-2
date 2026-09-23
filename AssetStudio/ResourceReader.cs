@@ -1,4 +1,4 @@
-﻿using System.IO;
+using System.IO;
 
 namespace AssetStudio
 {
@@ -75,7 +75,26 @@ namespace AssetStudio
         {
             var binaryReader = GetReader();
             binaryReader.BaseStream.Position = offset;
-            binaryReader.Read(buff, 0, (int)size);
+
+            // Stream.Read (and BinaryReader.Read) is only guaranteed to return at least 1 byte,
+            // not to fill the requested count in one call. A single call can return early -
+            // especially for larger reads - leaving the rest of buff as whatever stale bytes
+            // were already in it (e.g. leftover data from an ArrayPool rental). Downstream BCn/
+            // crunch decoders then treat that leftover data as real compressed bytes, producing
+            // a clean run of correct blocks followed by noise once the short read's boundary is
+            // hit. Loop until the full requested size has been read or the stream is exhausted.
+            var total = (int)size;
+            var read = 0;
+            while (read < total)
+            {
+                var n = binaryReader.Read(buff, read, total - read);
+                if (n == 0)
+                {
+                    throw new EndOfStreamException(
+                        $"Unexpected end of stream while reading resource data: expected {total} bytes, got {read}.");
+                }
+                read += n;
+            }
         }
 
         public void WriteData(string path)
