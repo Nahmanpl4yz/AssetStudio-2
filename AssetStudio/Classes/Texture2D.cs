@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 
 namespace AssetStudio
 {
@@ -92,21 +92,6 @@ namespace AssetStudio
             if (version[0] > 2019 || (version[0] == 2019 && version[1] >= 3)) //2019.3 and up
             {
                 var m_IgnoreMasterTextureLimit = reader.ReadBoolean();
-            }
-            // AssetStudio 2 fix: Unity 2022.2 added "Mipmap Limit Groups" and, with it, a new
-            // m_MipmapLimitGroupName string field right here (renaming the bool above from
-            // m_IgnoreMasterTextureLimit to m_IgnoreMipmapLimit in the process, but that's just
-            // a name - the bool itself didn't move). Without reading this string, every field
-            // parsed after it - including m_StreamData a few lines down, which is what actually
-            // tells ResourceReader where in the resource file a texture's bytes live - gets read
-            // starting from the wrong byte offset. That misalignment is enough to still "parse"
-            // without throwing (most fields are plausible-looking ints/bools/floats) while
-            // silently pointing every streamed texture at garbage: full-image block noise for
-            // textures whose bogus offset/size still lands inside the file, and a hard failure
-            // ("doesn't load") for the ones whose bogus size/offset doesn't.
-            if (version[0] > 2022 || (version[0] == 2022 && version[1] >= 2)) //2022.2 and up
-            {
-                var m_MipmapLimitGroupName = reader.ReadAlignedString();
             }
             if (version[0] >= 3) //3.0.0 - 5.4
             {
