@@ -13,9 +13,9 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - uses: actions/checkout@v2
-      - uses: microsoft/setup-msbuild@v1.1
-      
+      - uses: actions/checkout@v4
+      - uses: microsoft/setup-msbuild@v2
+
       - name: Download FBX SDK
         run: |
           md fbx
@@ -28,7 +28,7 @@ jobs:
 
       - name: Nuget Restore
         run: nuget restore
-      
+
       - name: Build .Net472
         run: msbuild /p:Configuration=Release /p:TargetFramework=net472 /verbosity:minimal
 
@@ -39,19 +39,19 @@ jobs:
         run: msbuild /t:AssetStudioGUI:publish /p:Configuration=Release /p:TargetFramework=net6.0-windows /p:SelfContained=false /verbosity:minimal
 
       - name: Upload .Net472 Artifact
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
           name: AssetStudio.net472
           path: AssetStudioGUI/bin/Release/net472
 
       - name: Upload .Net5 Artifact
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
           name: AssetStudio.net5
           path: AssetStudioGUI/bin/Release/net5.0-windows/publish
 
       - name: Upload .Net6 Artifact
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
           name: AssetStudio.net6
           path: AssetStudioGUI/bin/Release/net6.0-windows/publish
