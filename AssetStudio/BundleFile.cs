@@ -1,4 +1,4 @@
-﻿using K4os.Compression.LZ4;
+using K4os.Compression.LZ4;
 using System;
 using System.IO;
 using System.Linq;
@@ -336,7 +336,27 @@ namespace AssetStudio
                         {
                             var compressedSize = (int)blockInfo.compressedSize;
                             var compressedBytes = BigArrayPool<byte>.Shared.Rent(compressedSize);
-                            reader.Read(compressedBytes, 0, compressedSize);
+
+                            // Same short-read hazard as ResourceReader.GetData: Stream.Read/BinaryReader.Read
+                            // is only guaranteed to return at least 1 byte, not to fill the request. A single
+                            // call reading a whole compressed block (often tens of KB+) can return early,
+                            // leaving the tail of compressedBytes as stale bytes from the ArrayPool rental.
+                            // LZ4Codec.Decode then desyncs at that truncation point, corrupting every asset
+                            // whose data lives in (or after) this block - upstream of ResourceReader, so no
+                            // fix downstream of this read can compensate for it. Loop until the full block
+                            // has actually been read.
+                            var compressedRead = 0;
+                            while (compressedRead < compressedSize)
+                            {
+                                var n = reader.Read(compressedBytes, compressedRead, compressedSize - compressedRead);
+                                if (n == 0)
+                                {
+                                    throw new EndOfStreamException(
+                                        $"Unexpected end of stream while reading a compressed bundle block: expected {compressedSize} bytes, got {compressedRead}.");
+                                }
+                                compressedRead += n;
+                            }
+
                             var uncompressedSize = (int)blockInfo.uncompressedSize;
                             var uncompressedBytes = BigArrayPool<byte>.Shared.Rent(uncompressedSize);
                             var numWrite = LZ4Codec.Decode(compressedBytes, 0, compressedSize, uncompressedBytes, 0, uncompressedSize);
