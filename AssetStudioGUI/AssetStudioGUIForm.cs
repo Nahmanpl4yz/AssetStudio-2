@@ -1036,7 +1036,7 @@ namespace AssetStudioGUI
             StatusStripUpdate("Material preview: no texture to display, see info panel for properties");
         }
 
-
+        private void PreviewTexture2D(AssetItem assetItem, Texture2D m_Texture2D)
         {
             var image = m_Texture2D.ConvertToImage(true);
             if (image != null)
