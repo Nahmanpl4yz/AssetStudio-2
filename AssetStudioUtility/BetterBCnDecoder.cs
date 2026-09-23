@@ -301,5 +301,141 @@ namespace AssetStudio
             }
             catch { return false; }
         }
+
+        // ETC1, ported directly from the AOSP reference decoder (etc1_decode_block /
+        // decode_subblock in frameworks/native/opengl/libs/ETC1/etc1.cpp) rather than
+        // re-derived, because the ETC1 bit layout (which fields sit in the "diff"/"flip"
+        // bits, how the two 16-bit pixel-index planes map to (x,y), the exact intensity
+        // modifier table) is easy to get subtly wrong from memory and a subtly-wrong
+        // block layout still "decodes" without erroring - it just produces structured,
+        // blocky garbage instead of a clean decode failure. Used for ETC_RGB4/ETC_RGB4_3DS
+        // in "Better" mode as a fallback alongside the native Texture2DDecoderNative path.
+        private static readonly int[] EtcModifierTable =
+        {
+            2, 8, -2, -8,
+            5, 17, -5, -17,
+            9, 29, -9, -29,
+            13, 42, -13, -42,
+            18, 60, -18, -60,
+            24, 80, -24, -80,
+            33, 106, -33, -106,
+            47, 183, -47, -183
+        };
+
+        private static readonly int[] EtcLookup = { 0, 1, 2, 3, -4, -3, -2, -1 };
+
+        private static int EtcConvert4To8(int b)
+        {
+            int c = b & 0xf;
+            return (c << 4) | c;
+        }
+
+        private static int EtcConvert5To8(int b)
+        {
+            int c = b & 0x1f;
+            return (c << 3) | (c >> 2);
+        }
+
+        private static int EtcConvertDiff(int baseVal, int diff) => EtcConvert5To8((0x1f & baseVal) + EtcLookup[0x7 & diff]);
+
+        // Decodes one 4x2 (or 2x4, if flipped) ETC1 subblock into a local 4x4 RGB buffer
+        // (row-major, 3 bytes/pixel), following decode_subblock's index math exactly.
+        private static void DecodeEtcSubblock(byte[] block16, int r, int g, int b, int[] table, int tableOffset, uint low, bool second, bool flipped)
+        {
+            int baseX = 0, baseY = 0;
+            if (second)
+            {
+                if (flipped) baseY = 2;
+                else baseX = 2;
+            }
+            for (int i = 0; i < 8; i++)
+            {
+                int x, y;
+                if (flipped)
+                {
+                    x = baseX + (i >> 1);
+                    y = baseY + (i & 1);
+                }
+                else
+                {
+                    x = baseX + (i >> 2);
+                    y = baseY + (i & 3);
+                }
+                int k = y + (x * 4);
+                int offset = (int)(((low >> k) & 1) | ((low >> (k + 15)) & 2));
+                int delta = table[tableOffset + offset];
+                int q = 3 * (x + 4 * y);
+                block16[q] = ClampByte(r + delta);
+                block16[q + 1] = ClampByte(g + delta);
+                block16[q + 2] = ClampByte(b + delta);
+            }
+        }
+
+        private static byte ClampByte(int x) => (byte)(x >= 0 ? (x < 255 ? x : 255) : 0);
+
+        public static bool DecodeETC1(byte[] data, int width, int height, byte[] image)
+        {
+            try
+            {
+                int blocksWide = (width + 3) / 4;
+                int blocksHigh = (height + 3) / 4;
+                int offset = 0;
+                var block = new byte[4 * 4 * 3];
+                for (int by = 0; by < blocksHigh; by++)
+                {
+                    for (int bx = 0; bx < blocksWide; bx++)
+                    {
+                        uint high = ((uint)data[offset] << 24) | ((uint)data[offset + 1] << 16) | ((uint)data[offset + 2] << 8) | data[offset + 3];
+                        uint low = ((uint)data[offset + 4] << 24) | ((uint)data[offset + 5] << 16) | ((uint)data[offset + 6] << 8) | data[offset + 7];
+
+                        int r1, r2, g1, g2, b1, b2;
+                        if ((high & 2) != 0)
+                        {
+                            // differential
+                            int rBase = (int)(high >> 27);
+                            int gBase = (int)(high >> 19);
+                            int bBase = (int)(high >> 11);
+                            r1 = EtcConvert5To8(rBase);
+                            r2 = EtcConvertDiff(rBase, (int)(high >> 24));
+                            g1 = EtcConvert5To8(gBase);
+                            g2 = EtcConvertDiff(gBase, (int)(high >> 16));
+                            b1 = EtcConvert5To8(bBase);
+                            b2 = EtcConvertDiff(bBase, (int)(high >> 8));
+                        }
+                        else
+                        {
+                            // individual
+                            r1 = EtcConvert4To8((int)(high >> 28));
+                            r2 = EtcConvert4To8((int)(high >> 24));
+                            g1 = EtcConvert4To8((int)(high >> 20));
+                            g2 = EtcConvert4To8((int)(high >> 16));
+                            b1 = EtcConvert4To8((int)(high >> 12));
+                            b2 = EtcConvert4To8((int)(high >> 8));
+                        }
+
+                        int tableIndexA = (int)(7 & (high >> 5));
+                        int tableIndexB = (int)(7 & (high >> 2));
+                        bool flipped = (high & 1) != 0;
+
+                        DecodeEtcSubblock(block, r1, g1, b1, EtcModifierTable, tableIndexA * 4, low, false, flipped);
+                        DecodeEtcSubblock(block, r2, g2, b2, EtcModifierTable, tableIndexB * 4, low, true, flipped);
+
+                        for (int y = 0; y < 4; y++)
+                        {
+                            for (int x = 0; x < 4; x++)
+                            {
+                                int q = 3 * (x + 4 * y);
+                                uint color = Pack(block[q], block[q + 1], block[q + 2], 255);
+                                WritePixel(image, width, height, bx * 4 + x, by * 4 + y, color);
+                            }
+                        }
+
+                        offset += 8;
+                    }
+                }
+                return true;
+            }
+            catch { return false; }
+        }
     }
 }
