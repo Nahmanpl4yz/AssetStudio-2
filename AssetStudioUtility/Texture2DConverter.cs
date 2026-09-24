@@ -81,6 +81,7 @@ namespace AssetStudio
                     //AssetStudio 2 fix: stock AssetStudio never implemented DXT3 and silently produced a
                     //black texture here. Both decoder modes now actually decode it (DXT3 has no native
                     //decoder in Texture2DDecoderNative, so this always uses the managed implementation).
+                    SwapBytesForXbox(buff);
                     flag = BetterBCnDecoder.DecodeBC2(buff, m_Width, m_Height, bytes);
                     break;
                 case TextureFormat.DXT5: //test pass

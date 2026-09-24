@@ -1847,12 +1847,16 @@ namespace AssetStudioGUI
                 glControl1.Visible = true;
                 #region Texture (AssetStudio 2)
                 texCoordData = null;
-                if (Properties.Settings.Default.previewMeshTexture && m_Mesh.m_UV0 != null && m_Mesh.m_UV0.Length >= m_Mesh.m_VertexCount * 2)
+                //UV0 may be stored as Vector2, Vector3 or Vector4 per vertex; use the real stride
+                //instead of assuming 2, otherwise every vertex after the first reads the wrong floats
+                //and the texture comes out scrambled across the mesh.
+                var uvStride = MeshTextureResolver.GetUVStride(m_Mesh.m_UV0, m_Mesh.m_VertexCount);
+                if (Properties.Settings.Default.previewMeshTexture && uvStride > 0)
                 {
                     texCoordData = new Vector2[m_Mesh.m_VertexCount];
                     for (int v = 0; v < m_Mesh.m_VertexCount; v++)
                     {
-                        texCoordData[v] = new Vector2(m_Mesh.m_UV0[v * 2], m_Mesh.m_UV0[v * 2 + 1]);
+                        texCoordData[v] = new Vector2(m_Mesh.m_UV0[v * uvStride], m_Mesh.m_UV0[v * uvStride + 1]);
                     }
                 }
                 UploadMeshPreviewTextures(m_Mesh);

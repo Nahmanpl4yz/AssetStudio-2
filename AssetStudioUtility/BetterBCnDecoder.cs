@@ -45,10 +45,15 @@ namespace AssetStudio
             }
             else
             {
-                // 3-color + transparent black mode (BC1 punch-through alpha).
+                // 3-color + black mode (BC1 "punch-through" block).
+                // Unity treats DXT1 as an opaque RGB format, and the native decoder this replaces
+                // always writes alpha 255 here. Emitting alpha 0 for index 3 (the strict D3D BC1
+                // reading) punched transparent holes into ordinary opaque mesh textures wherever an
+                // encoder happened to produce a c0 <= c1 block - visible as speckled/see-through
+                // texels in PNG exports and in OBJ/FBX consumers that honour alpha. Keep it opaque.
                 colors[2] = Pack((r0 + r1 + 1) / 2, (g0 + g1 + 1) / 2, (b0 + b1 + 1) / 2, 255);
-                colors[3] = Pack(0, 0, 0, 0);
-                hasTransparent = true;
+                colors[3] = Pack(0, 0, 0, 255);
+                hasTransparent = false;
             }
         }
 

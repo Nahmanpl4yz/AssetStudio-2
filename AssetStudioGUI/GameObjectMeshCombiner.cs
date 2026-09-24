@@ -197,7 +197,8 @@ namespace AssetStudioGUI
                 bool hasNormals = m.m_Normals != null && m.m_Normals.Length > 0;
                 if (hasNormals) normalStride = m.m_Normals.Length == vcount * 4 ? 4 : 3;
 
-                bool hasUV = m.m_UV0 != null && m.m_UV0.Length >= vcount * 2;
+                int uvStride = MeshTextureResolver.GetUVStride(m.m_UV0, vcount);
+                bool hasUV = uvStride > 0;
                 anyUV |= hasUV;
 
                 int baseIndex = vertices.Count;
@@ -231,7 +232,7 @@ namespace AssetStudioGUI
                     }
 
                     if (hasUV)
-                        uvs.Add(new Vector2(m.m_UV0[v * 2], m.m_UV0[v * 2 + 1]));
+                        uvs.Add(new Vector2(m.m_UV0[v * uvStride], m.m_UV0[v * uvStride + 1]));
                     else
                         uvs.Add(new Vector2(0, 0));
 

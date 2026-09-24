@@ -123,32 +123,93 @@ namespace AssetStudio
             return null;
         }
 
+        // Property names that carry the base color / albedo, in priority order. Built-in and
+        // legacy shaders use _MainTex; URP uses _BaseMap; HDRP uses _BaseColorMap; many custom
+        // and mobile shaders use _Albedo/_Diffuse variants.
+        private static readonly string[] AlbedoPropertyNames =
+        {
+            "_MainTex", "_BaseMap", "_BaseColorMap", "_BaseColorTexture", "_Albedo", "_AlbedoMap",
+            "_AlbedoTex", "_Diffuse", "_DiffuseMap", "_DiffuseTex", "_ColorMap", "_ColorTex",
+            "_Tex", "_Texture", "_BaseTex"
+        };
+
+        // Slots that hold data which is NOT a color image (normals, masks, lookups...). Showing one
+        // of these as "the" texture of a mesh looks like a corrupted/purple/grey texture, so they
+        // are never picked by the "first texture found" fallback.
+        private static readonly string[] NonAlbedoKeywords =
+        {
+            "bump", "normal", "mask", "occlusion", "emission", "emissive", "metallic", "specular",
+            "gloss", "rough", "detail", "light", "shadow", "height", "parallax", "displace",
+            "cube", "reflection", "env", "ramp", "lut", "noise", "flow", "distortion", "cookie"
+        };
+
+        private static bool IsNonAlbedoSlot(string name)
+        {
+            foreach (var kw in NonAlbedoKeywords)
+            {
+                if (name.IndexOf(kw, System.StringComparison.OrdinalIgnoreCase) >= 0)
+                    return true;
+            }
+            return false;
+        }
+
         /// <summary>
-        /// AssetStudio 2: best-effort main texture (_MainTex, else first texture) for a single
-        /// material. Used per-submesh by the mesh preview so each submesh binds the texture
-        /// from its own material rather than one texture being applied to the whole mesh.
+        /// AssetStudio 2: best-effort base-color texture for a single material. Looks for a known
+        /// albedo slot first (_MainTex, _BaseMap, ...), then falls back to the first texture that
+        /// is not obviously a normal/mask/lightmap slot. Used per-submesh by the mesh preview and
+        /// for map_Kd in the OBJ export so both pick the same texture.
         /// </summary>
         public static Texture2D FindMainTextureForMaterial(Material mat)
         {
+            return FindMainTextureForMaterial(mat, out _);
+        }
+
+        public static Texture2D FindMainTextureForMaterial(Material mat, out string propertyName)
+        {
+            propertyName = null;
             if (mat?.m_SavedProperties?.m_TexEnvs == null)
                 return null;
 
-            foreach (var texEnv in mat.m_SavedProperties.m_TexEnvs)
+            foreach (var wanted in AlbedoPropertyNames)
             {
-                if (texEnv.Key == "_MainTex" && texEnv.Value.m_Texture.TryGet<Texture2D>(out var tex))
+                foreach (var texEnv in mat.m_SavedProperties.m_TexEnvs)
                 {
-                    return tex;
+                    if (texEnv.Key == wanted && texEnv.Value.m_Texture.TryGet<Texture2D>(out var tex))
+                    {
+                        propertyName = texEnv.Key;
+                        return tex;
+                    }
                 }
             }
             foreach (var texEnv in mat.m_SavedProperties.m_TexEnvs)
             {
+                if (IsNonAlbedoSlot(texEnv.Key))
+                    continue;
                 if (texEnv.Value.m_Texture.TryGet<Texture2D>(out var tex))
                 {
+                    propertyName = texEnv.Key;
                     return tex;
                 }
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// AssetStudio 2: number of float components per vertex in a UV channel (2, 3 or 4), or 0 if
+        /// the array does not divide evenly into the vertex count. Unity meshes can store UV0 as a
+        /// Vector3/Vector4 (e.g. when extra data is packed in z/w); reading such an array with a
+        /// hard-coded stride of 2 samples the wrong floats for every vertex after the first and
+        /// scrambles the texture across the mesh.
+        /// </summary>
+        public static int GetUVStride(float[] uv, int vertexCount)
+        {
+            if (uv == null || vertexCount <= 0 || uv.Length < vertexCount * 2)
+                return 0;
+            if (uv.Length % vertexCount != 0)
+                return 0;
+            var stride = uv.Length / vertexCount;
+            return stride >= 2 && stride <= 4 ? stride : 0;
         }
     }
 }

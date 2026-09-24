@@ -753,7 +753,8 @@ namespace AssetStudioGUI
                 int stride = m.m_Vertices.Length == vcount * 4 ? 4 : 3;
                 bool hasNormals = m.m_Normals != null && m.m_Normals.Length > 0;
                 int normalStride = hasNormals ? (m.m_Normals.Length == vcount * 4 ? 4 : 3) : 3;
-                bool hasUV = m.m_UV0 != null && m.m_UV0.Length >= vcount * 2;
+                int uvStride = MeshTextureResolver.GetUVStride(m.m_UV0, vcount);
+                bool hasUV = uvStride > 0;
                 anyUV |= hasUV;
                 bool skinned = part.BoneMap != null && m.m_Skin != null && m.m_Skin.Length >= vcount;
 
@@ -838,7 +839,7 @@ namespace AssetStudioGUI
 
                     vertices.Add(worldPos);
                     normals.Add(worldNormal);
-                    uvs.Add(hasUV ? new Vector2(m.m_UV0[v * 2], m.m_UV0[v * 2 + 1]) : Vector2.Zero);
+                    uvs.Add(hasUV ? new Vector2(m.m_UV0[v * uvStride], m.m_UV0[v * uvStride + 1]) : Vector2.Zero);
                     colors.Add(new Vector4(0.6f, 0.6f, 0.6f, 1f));
                 }
 

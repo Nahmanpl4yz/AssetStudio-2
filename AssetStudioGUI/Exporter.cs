@@ -129,6 +129,8 @@ namespace AssetStudioGUI
             var m_Mesh = (Mesh)item.Asset;
             if (m_Mesh.m_VertexCount <= 0)
                 return false;
+            if (m_Mesh.m_Vertices == null || m_Mesh.m_Vertices.Length == 0)
+                return false;
             if (!TryExportFile(exportPath, item, ".obj", out var exportFullPath))
                 return false;
 
@@ -136,25 +138,47 @@ namespace AssetStudioGUI
             //owning GameObject/Renderer/Material - a raw Mesh asset has no direct PPtr to a
             //Texture2D) and export them as a single textured OBJ+MTL+image model instead of a
             //bare, untextured OBJ.
+            //The materials are taken in renderer slot order WITHOUT de-duplication (null = empty
+            //slot) so that submesh i always maps to material slot i. The old de-duplicated list
+            //shifted every later submesh onto the wrong material/texture whenever two slots
+            //shared a material.
             List<Material> meshMaterials = null;
             if (Properties.Settings.Default.exportMeshWithTextures)
             {
-                meshMaterials = MeshTextureResolver.FindMaterials(m_Mesh, Studio.assetsManager);
+                meshMaterials = MeshTextureResolver.FindOrderedMaterials(m_Mesh, Studio.assetsManager);
+            }
+
+            //Unique, file-system-safe names per distinct material so two materials that share a
+            //name can't collapse into one .mtl entry (which made one of them use the other's texture).
+            var materialNames = new Dictionary<Material, string>();
+            var distinctMaterials = new List<Material>();
+            if (meshMaterials != null)
+            {
+                var usedNames = new HashSet<string>(System.StringComparer.OrdinalIgnoreCase);
+                foreach (var mat in meshMaterials)
+                {
+                    if (mat == null || materialNames.ContainsKey(mat))
+                        continue;
+                    var baseName = FixFileName(string.IsNullOrEmpty(mat.m_Name) ? "material" : mat.m_Name).Replace(' ', '_');
+                    var name = baseName;
+                    for (var n = 1; !usedNames.Add(name); n++)
+                    {
+                        name = baseName + "_" + n;
+                    }
+                    materialNames[mat] = name;
+                    distinctMaterials.Add(mat);
+                }
             }
 
             var sb = new StringBuilder();
             var mtlFileName = Path.GetFileNameWithoutExtension(exportFullPath) + ".mtl";
-            var hasMaterials = meshMaterials != null && meshMaterials.Count > 0;
+            var hasMaterials = distinctMaterials.Count > 0;
             if (hasMaterials)
             {
                 sb.AppendLine("mtllib " + mtlFileName);
             }
             sb.AppendLine("g " + m_Mesh.m_Name);
             #region Vertices
-            if (m_Mesh.m_Vertices == null || m_Mesh.m_Vertices.Length == 0)
-            {
-                return false;
-            }
             int c = 3;
             if (m_Mesh.m_Vertices.Length == m_Mesh.m_VertexCount * 4)
             {
@@ -167,60 +191,72 @@ namespace AssetStudioGUI
             #endregion
 
             #region UV
-            if (m_Mesh.m_UV0?.Length > 0)
+            //UV0 can be a Vector2/3/4 per vertex; use its real stride.
+            var uvStride = MeshTextureResolver.GetUVStride(m_Mesh.m_UV0, m_Mesh.m_VertexCount);
+            var hasUV = uvStride > 0;
+            if (hasUV)
             {
-                c = 4;
-                if (m_Mesh.m_UV0.Length == m_Mesh.m_VertexCount * 2)
-                {
-                    c = 2;
-                }
-                else if (m_Mesh.m_UV0.Length == m_Mesh.m_VertexCount * 3)
-                {
-                    c = 3;
-                }
                 for (int v = 0; v < m_Mesh.m_VertexCount; v++)
                 {
-                    sb.AppendFormat("vt {0} {1}\r\n", m_Mesh.m_UV0[v * c], m_Mesh.m_UV0[v * c + 1]);
+                    sb.AppendFormat("vt {0} {1}\r\n", m_Mesh.m_UV0[v * uvStride], m_Mesh.m_UV0[v * uvStride + 1]);
                 }
             }
             #endregion
 
             #region Normals
+            var hasNormals = false;
             if (m_Mesh.m_Normals?.Length > 0)
             {
+                var nc = 0;
                 if (m_Mesh.m_Normals.Length == m_Mesh.m_VertexCount * 3)
                 {
-                    c = 3;
+                    nc = 3;
                 }
                 else if (m_Mesh.m_Normals.Length == m_Mesh.m_VertexCount * 4)
                 {
-                    c = 4;
+                    nc = 4;
                 }
-                for (int v = 0; v < m_Mesh.m_VertexCount; v++)
+                if (nc != 0)
                 {
-                    sb.AppendFormat("vn {0} {1} {2}\r\n", -m_Mesh.m_Normals[v * c], m_Mesh.m_Normals[v * c + 1], m_Mesh.m_Normals[v * c + 2]);
+                    hasNormals = true;
+                    for (int v = 0; v < m_Mesh.m_VertexCount; v++)
+                    {
+                        sb.AppendFormat("vn {0} {1} {2}\r\n", -m_Mesh.m_Normals[v * nc], m_Mesh.m_Normals[v * nc + 1], m_Mesh.m_Normals[v * nc + 2]);
+                    }
                 }
             }
             #endregion
 
             #region Face
+            //Only reference vt/vn indices that were actually written; a face like "1/1/1" pointing at
+            //a nonexistent vt/vn makes importers reject the file or scramble the UVs.
+            var faceFormat = hasUV && hasNormals ? "{0}/{0}/{0}" : hasUV ? "{0}/{0}" : hasNormals ? "{0}//{0}" : "{0}";
             int sum = 0;
             for (var i = 0; i < m_Mesh.m_SubMeshes.Length; i++)
             {
                 sb.AppendLine($"g {m_Mesh.m_Name}_{i}");
                 if (hasMaterials)
                 {
-                    //Best-effort mapping: submesh index -> material slot of the same index,
-                    //falling back to the first material if the renderer had fewer materials
-                    //than submeshes (a legitimate situation for some multi-pass shaders).
-                    var mat = i < meshMaterials.Count ? meshMaterials[i] : meshMaterials[0];
-                    sb.AppendLine($"usemtl {FixFileName(mat.m_Name)}");
+                    //Submesh index -> material slot of the same index (last slot reused if the
+                    //renderer has fewer materials than submeshes, as Unity does).
+                    Material mat = null;
+                    if (meshMaterials.Count > 0)
+                    {
+                        mat = meshMaterials[i < meshMaterials.Count ? i : meshMaterials.Count - 1];
+                    }
+                    if (mat != null && materialNames.TryGetValue(mat, out var matName))
+                    {
+                        sb.AppendLine($"usemtl {matName}");
+                    }
                 }
                 int indexCount = (int)m_Mesh.m_SubMeshes[i].indexCount;
                 var end = sum + indexCount / 3;
                 for (int f = sum; f < end; f++)
                 {
-                    sb.AppendFormat("f {0}/{0}/{0} {1}/{1}/{1} {2}/{2}/{2}\r\n", m_Mesh.m_Indices[f * 3 + 2] + 1, m_Mesh.m_Indices[f * 3 + 1] + 1, m_Mesh.m_Indices[f * 3] + 1);
+                    sb.AppendFormat("f {0} {1} {2}\r\n",
+                        string.Format(faceFormat, m_Mesh.m_Indices[f * 3 + 2] + 1),
+                        string.Format(faceFormat, m_Mesh.m_Indices[f * 3 + 1] + 1),
+                        string.Format(faceFormat, m_Mesh.m_Indices[f * 3] + 1));
                 }
                 sum = end;
             }
@@ -231,25 +267,61 @@ namespace AssetStudioGUI
 
             if (hasMaterials)
             {
-                ExportMeshMaterials(meshMaterials, Path.GetDirectoryName(exportFullPath), mtlFileName);
+                ExportMeshMaterials(distinctMaterials, materialNames, Path.GetDirectoryName(exportFullPath), mtlFileName);
             }
 
             return true;
         }
 
         //AssetStudio 2: writes a .mtl alongside a mesh's .obj, plus the referenced textures
-        //(map_Kd for the main texture, map_Bump for a normal/bump map when present), so the
+        //(map_Kd for the base color texture, map_Bump for a normal/bump map when present), so the
         //mesh and its texture(s) can be opened together as one 3D model in any OBJ-compatible
         //viewer/DCC tool instead of the user having to separately export and manually re-link
         //the texture in stock AssetStudio.
-        private static void ExportMeshMaterials(List<Material> materials, string exportDir, string mtlFileName)
+        private static void ExportMeshMaterials(List<Material> materials, Dictionary<Material, string> materialNames, string exportDir, string mtlFileName)
         {
             var sb = new StringBuilder();
-            var exportedTextures = new HashSet<Texture2D>();
+            //One unique file name per texture object. Two different Texture2D assets that share a
+            //name used to write to the same .png, so the last one silently overwrote the other.
+            var textureFileNames = new Dictionary<Texture2D, string>();
+            var usedFileNames = new HashSet<string>(System.StringComparer.OrdinalIgnoreCase);
+
+            string ExportTexture(Texture2D tex)
+            {
+                if (textureFileNames.TryGetValue(tex, out var existing))
+                    return existing;
+
+                var baseName = FixFileName(string.IsNullOrEmpty(tex.m_Name) ? "texture" : tex.m_Name).Replace(' ', '_');
+                var texFileName = baseName + ".png";
+                for (var n = 1; !usedFileNames.Add(texFileName); n++)
+                {
+                    texFileName = baseName + "_" + n + ".png";
+                }
+                textureFileNames[tex] = texFileName;
+
+                try
+                {
+                    using (var image = tex.ConvertToImage(true))
+                    {
+                        if (image != null)
+                        {
+                            using (var fs = File.Create(Path.Combine(exportDir, texFileName)))
+                            {
+                                image.WriteToStream(fs, ImageFormat.Png);
+                            }
+                        }
+                    }
+                }
+                catch
+                {
+                    //A texture that fails to decode shouldn't stop the rest of the model export.
+                }
+                return texFileName;
+            }
 
             foreach (var mat in materials)
             {
-                sb.AppendLine($"newmtl {FixFileName(mat.m_Name)}");
+                sb.AppendLine($"newmtl {materialNames[mat]}");
                 sb.AppendLine("Kd 1.000 1.000 1.000");
 
                 if (mat.m_SavedProperties?.m_TexEnvs == null)
@@ -257,37 +329,24 @@ namespace AssetStudioGUI
                     continue;
                 }
 
+                //Base color: same selection logic as the mesh preview (handles _MainTex, _BaseMap, ...).
+                var mainTex = MeshTextureResolver.FindMainTextureForMaterial(mat, out var mainTexProperty);
+                if (mainTex != null)
+                {
+                    sb.AppendLine($"map_Kd {ExportTexture(mainTex)}");
+                }
+
                 foreach (var texEnv in mat.m_SavedProperties.m_TexEnvs)
                 {
                     if (!texEnv.Value.m_Texture.TryGet<Texture2D>(out var tex))
                         continue;
 
-                    var texFileName = FixFileName(tex.m_Name) + ".png";
-                    var texFullPath = Path.Combine(exportDir, texFileName);
-                    if (exportedTextures.Add(tex) || !File.Exists(texFullPath))
-                    {
-                        try
-                        {
-                            using (var image = tex.ConvertToImage(true))
-                            {
-                                if (image != null)
-                                {
-                                    using (var fs = File.Create(texFullPath))
-                                    {
-                                        image.WriteToStream(fs, ImageFormat.Png);
-                                    }
-                                }
-                            }
-                        }
-                        catch
-                        {
-                            //A texture that fails to decode shouldn't stop the rest of the model export.
-                        }
-                    }
+                    if (texEnv.Key == mainTexProperty)
+                        continue;
 
-                    if (texEnv.Key == "_MainTex")
-                        sb.AppendLine($"map_Kd {texFileName}");
-                    else if (texEnv.Key == "_BumpMap")
+                    //Other slots are still exported as files; only the normal/bump map is wired in.
+                    var texFileName = ExportTexture(tex);
+                    if (texEnv.Key == "_BumpMap")
                         sb.AppendLine($"map_Bump {texFileName}");
                 }
             }
