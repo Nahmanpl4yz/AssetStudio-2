@@ -1036,7 +1036,7 @@ namespace AssetStudioGUI
             StatusStripUpdate("Material preview: no texture to display, see info panel for properties");
         }
 
-        private void PreviewTexture2D(AssetItem assetItem, Texture2D m_Texture2D)
+
         {
             var image = m_Texture2D.ConvertToImage(true);
             if (image != null)
@@ -1427,7 +1427,7 @@ namespace AssetStudioGUI
         {
             meshPartsPanel = new Panel
             {
-                BackColor = System.Drawing.Color.FromArgb(235, 32, 32, 32),
+                BackColor = Color.FromArgb(235, 32, 32, 32),
                 Width = 230,
                 Visible = false
             };
@@ -1435,7 +1435,7 @@ namespace AssetStudioGUI
             {
                 Text = "Parts (uncheck to hide)",
                 Dock = DockStyle.Top,
-                ForeColor = System.Drawing.Color.White,
+                ForeColor = Color.White,
                 Height = 22,
                 TextAlign = ContentAlignment.MiddleLeft,
                 Padding = new Padding(4, 0, 0, 0)
@@ -1451,8 +1451,8 @@ namespace AssetStudioGUI
             {
                 Dock = DockStyle.Fill,
                 CheckOnClick = true,
-                BackColor = System.Drawing.Color.FromArgb(45, 45, 45),
-                ForeColor = System.Drawing.Color.White,
+                BackColor = Color.FromArgb(45, 45, 45),
+                ForeColor = Color.White,
                 BorderStyle = BorderStyle.None
             };
             meshPartsCheckedListBox.ItemCheck += meshPartsCheckedListBox_ItemCheck;
@@ -1573,6 +1573,34 @@ namespace AssetStudioGUI
             colorData = combined.Colors;
             indiceData = combined.Indices;
             texCoordData = null; // no single Mesh to resolve submesh textures against here
+
+            // AssetStudio 2 fix: this path builds a brand-new vertex/index buffer but never used
+            // to reset submeshTextureIds/submeshIndexOffsets/submeshIndexCounts/
+            // meshPreviewHasAnyTexture, so they kept whatever values were left over from the
+            // last *single*-mesh preview (a completely different, unrelated index buffer and
+            // GL texture). The render loop then drew this new combined mesh using those stale
+            // index ranges and bound that stale, unrelated texture with no texcoord data behind
+            // it (texCoordData is null here) - producing exactly the "every textured mesh looks
+            // like garbage/noise" symptom, regardless of decoder mode, since the actual pixel
+            // decode was never involved. Combined/reconstructed previews don't resolve per-part
+            // textures yet, so this now explicitly renders untextured instead of texturing with
+            // garbage.
+            foreach (var texId in submeshTextureIds)
+            {
+                if (texId != -1)
+                {
+                    GL.DeleteTexture(texId);
+                }
+            }
+            submeshTextureIds.Clear();
+            submeshIndexOffsets.Clear();
+            submeshIndexCounts.Clear();
+            meshPreviewHasAnyTexture = false;
+            // Draw the whole combined index buffer as a single untextured range, instead of
+            // leaving these lists empty (which would draw nothing at all).
+            submeshIndexOffsets.Add(0);
+            submeshIndexCounts.Add(indiceData.Length);
+            submeshTextureIds.Add(-1);
 
             float[] min = { vertexData[0].X, vertexData[0].Y, vertexData[0].Z };
             float[] max = { vertexData[0].X, vertexData[0].Y, vertexData[0].Z };
@@ -2584,7 +2612,7 @@ namespace AssetStudioGUI
         {
             FMODwaveformBox = new PictureBox
             {
-                BackColor = System.Drawing.Color.FromArgb(24, 24, 24),
+                BackColor = Color.FromArgb(24, 24, 24),
                 Location = new Point(213, 160),
                 Size = new Size(350, 60),
                 Cursor = Cursors.Hand
@@ -2599,7 +2627,7 @@ namespace AssetStudioGUI
             var speedLabel = new Label
             {
                 Text = "Speed",
-                ForeColor = System.Drawing.Color.White,
+                ForeColor = Color.White,
                 AutoSize = true,
                 Location = new Point(580, 284)
             };
@@ -2724,15 +2752,15 @@ namespace AssetStudioGUI
 
             if (FMODwaveformMin == null || FMODwaveformMax == null)
             {
-                using (var emptyBrush = new SolidBrush(System.Drawing.Color.Gray))
+                using (var emptyBrush = new SolidBrush(Color.Gray))
                 {
                     g.DrawString("No waveform available", DefaultFont, emptyBrush, 6, midY - 6);
                 }
                 return;
             }
 
-            using (var waveBrush = new SolidBrush(System.Drawing.Color.FromArgb(90, 170, 250)))
-            using (var playPen = new Pen(System.Drawing.Color.White, 1.5f))
+            using (var waveBrush = new SolidBrush(Color.FromArgb(90, 170, 250)))
+            using (var playPen = new Pen(Color.White, 1.5f))
             {
                 var barWidth = Math.Max(1f, (float)w / WaveformBuckets);
                 for (var i = 0; i < WaveformBuckets; i++)
@@ -3473,7 +3501,7 @@ namespace AssetStudioGUI
         {
             animationControlsPanel = new Panel
             {
-                BackColor = System.Drawing.Color.FromArgb(235, 32, 32, 32),
+                BackColor = Color.FromArgb(235, 32, 32, 32),
                 Height = 66,
                 Visible = false
             };
@@ -3490,7 +3518,7 @@ namespace AssetStudioGUI
             animationTimeLabel = new Label
             {
                 Text = "0.00 / 0.00s",
-                ForeColor = System.Drawing.Color.White,
+                ForeColor = Color.White,
                 AutoSize = false,
                 Width = 110,
                 Height = 20,
@@ -3501,7 +3529,7 @@ namespace AssetStudioGUI
             animationLoopCheckBox = new CheckBox
             {
                 Text = "Loop",
-                ForeColor = System.Drawing.Color.White,
+                ForeColor = Color.White,
                 AutoSize = true,
                 Checked = true,
                 Location = new Point(162, 10)
